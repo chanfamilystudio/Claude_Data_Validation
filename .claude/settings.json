@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "extraKnownMarketplaces": {
+    "claude-code-playground-mods": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-code-playground",
+        "path": "claude-code/mods/.claude-plugin/marketplace.json",
+        "sparsePaths": ["claude-code/mods"]
+      }
+    },
+    "claude-code-mods": {
+      "source": { "source": "github", "repo": "karanb192/claude-code-mods" }
+    },
+    "alex-mods": {
+      "source": { "source": "github", "repo": "Fraktalis/claude-mods" }
+    },
+    "claude-kit": {
+      "source": { "source": "github", "repo": "JohnnyVizz/claude-kit" }
+    },
+    "claude-reflect-marketplace": {
+      "source": { "source": "github", "repo": "BayramAnnakov/claude-reflect" }
+    },
+    "terminal-browser": {
+      "source": { "source": "github", "repo": "zenbu-labs/terminal-browser" }
+    },
+    "hellosverre-mods": {
+      "source": { "source": "github", "repo": "hellosverre/claude-skins" }
+    }
+  },
+  "enabledPlugins": {
+    "blast-radius@claude-code-playground-mods": true,
+    "replay-theater@claude-code-playground-mods": true,
+    "cache-tax@claude-code-mods": true,
+    "file-tree@alex-mods": true,
+    "savvy-progress@claude-kit": true,
+    "reflect-mod@claude-reflect-marketplace": true,
+    "terminal-browser@terminal-browser": true,
+    "skins@hellosverre-mods": true,
+    "cc-plugin-you-should-know@builtin": true
+  }
+}
