@@ -290,6 +290,17 @@ class RecordMatchRule(_BaseRule):
                 )
         return self
 
+    @model_validator(mode="after")
+    def _unique_compare_columns(self) -> RecordMatchRule:
+        # the left column is the break's field_name (part of break_key), compared case-insensitively
+        seen: dict[str, str] = {}
+        for c in self.compare:
+            folded = c.left.lower()
+            if folded in seen:
+                raise ValueError(f"duplicate compare column {c.left!r} (same as {seen[folded]!r}, ignoring case)")
+            seen[folded] = c.left
+        return self
+
     def dataset_refs(self) -> list[tuple[str, str]]:
         return [("left", self.left), ("right", self.right)]
 

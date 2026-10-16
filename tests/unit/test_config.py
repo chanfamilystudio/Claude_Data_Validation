@@ -216,3 +216,15 @@ def test_duplicate_measure_names_are_a_loader_issue(tmp_fixture):
     assert len(e.value.issues) == 1
     assert e.value.issues[0].startswith("rules/payroll/pay_jrnl_totals.yaml: ")
     assert "duplicate measure name 'NET_AMOUNT'" in e.value.issues[0]
+
+
+def test_duplicate_compare_left_columns_are_a_loader_issue(tmp_fixture):
+    path = tmp_fixture / "rules" / "employees" / "emp_master_match.yaml"
+    compare = yaml.safe_load(path.read_text(encoding="utf-8"))["compare"]
+    dup = dict(compare[0], left=compare[0]["left"].upper(), right=compare[1]["right"])
+    edit_rule(tmp_fixture, "employees/emp_master_match.yaml", {"compare": [*compare, dup]})
+    with pytest.raises(ConfigError) as e:
+        load_project(tmp_fixture)
+    assert len(e.value.issues) == 1
+    assert e.value.issues[0].startswith("rules/employees/emp_master_match.yaml: ")
+    assert f"duplicate compare column {dup['left']!r}" in e.value.issues[0]
