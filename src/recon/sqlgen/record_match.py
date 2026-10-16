@@ -18,24 +18,27 @@ Shape of the generated ``diff_sql`` (nested derived tables, no CTEs, so it can b
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
 from textwrap import indent
 
-from recon.config.models import CompareField, MappingConfig, RecordMatchRule, Tolerance
+from recon.config.models import CompareField, MappingConfig, RecordMatchRule
 from recon.sqlgen.common import (
+    TAB,
     GenContext,
     GeneratedSql,
+    block,
     business_key_expr,
+    column_ref,
     mapping_ambiguity_check,
     mapping_source,
     norm_string,
     pii_hash,
-    qi,
+    row_counts_sql,
+    sub,
     text_of,
+    tolerance_sql,
     typed,
 )
 
-_TAB = "    "
 _NULL_DECIMAL = "CAST(NULL AS DECIMAL(38,6))"
 
 
@@ -64,42 +67,28 @@ class _Field:
         return f"-- {self.p}: {self.cfg.left}{via} vs {self.cfg.right} ({self.cfg.type}{pii})"
 
 
-def _col(alias: str, name: str) -> str:
-    if "." in name:
-        raise ValueError(f"column {name!r} must be a single-part identifier")
-    return f"{alias}.{qi(name)}"
-
-
-def _block(lines: list[str]) -> str:
-    return indent(",\n".join(lines), _TAB)
-
-
-def _sub(sql: str) -> str:
-    return indent(sql, _TAB)
-
-
 # --------------------------------------------------------------------------- per side
 
 
 def _side_sql(rule: RecordMatchRule, source: str, fields: list[_Field], side: str) -> str:
     """One row per business_key of one side: key_rows plus the per-field columns."""
     norm = rule.normalize
-    keys = [norm_string(_col("s", getattr(k, side)), norm) for k in rule.keys]
+    keys = [norm_string(column_ref("s", getattr(k, side)), norm) for k in rule.keys]
     base = [f"{business_key_expr(keys)} AS business_key"]
     agg = ["base.business_key", "COUNT_BIG(*) AS key_rows"]
     joins: list[str] = []
 
     for f in fields:
-        col = _col("s", getattr(f.cfg, side))
+        col = column_ref("s", getattr(f.cfg, side))
         value_src = col
         entries: list[tuple[str, str]] = []
         if side == "left" and f.mapping is not None:
             alias = f"m{f.n}"
-            frm = _col(alias, f.mapping.from_)
-            value_src = _col(alias, f.mapping.to)
+            frm = column_ref(alias, f.mapping.from_)
+            value_src = column_ref(alias, f.mapping.to)
             joins.append(
                 f"LEFT JOIN {mapping_source(f.mapping)} AS {alias}\n"
-                f"{_TAB}ON {norm_string(frm, norm)} = {norm_string(col, norm)}"
+                f"{TAB}ON {norm_string(frm, norm)} = {norm_string(col, norm)}"
             )
             if not f.cfg.pii:
                 entries.append((text_of(col), "src"))
@@ -121,31 +110,15 @@ def _side_sql(rule: RecordMatchRule, source: str, fields: list[_Field], side: st
             else:
                 agg.append(f"MAX(base.{name}) AS {name}")
 
-    base_sql = "SELECT\n" + _block(base) + f"\nFROM {source} AS s"
+    base_sql = "SELECT\n" + block(base) + f"\nFROM {source} AS s"
     if joins:
         base_sql += "\n" + "\n".join(joins)
     return (
-        "SELECT\n" + _block(agg) + "\nFROM (\n" + _sub(base_sql) + "\n) AS base\nGROUP BY base.business_key"
+        "SELECT\n" + block(agg) + "\nFROM (\n" + sub(base_sql) + "\n) AS base\nGROUP BY base.business_key"
     )
 
 
 # --------------------------------------------------------------------------- comparison
-
-
-def _lit(value: Decimal) -> str:
-    return format(value, "f")
-
-
-def _tolerance(tol: Tolerance | None, right: str) -> str | None:
-    """SQL for ``max(abs, pct * |right|)``; None when the comparison is exact."""
-    if tol is None or (tol.abs == 0 and tol.pct == 0):
-        return None
-    if tol.pct == 0:
-        return _lit(tol.abs)
-    pct = f"{_lit(tol.pct)} * ABS({right})"
-    if tol.abs == 0:
-        return pct
-    return f"CASE WHEN {_lit(tol.abs)} >= {pct} THEN {_lit(tol.abs)} ELSE {pct} END"
 
 
 def _bad(a: str, f: _Field) -> str:
@@ -176,7 +149,7 @@ def _compare_columns(f: _Field) -> list[str]:
             if f.cfg.type == "decimal"
             else f"CONVERT(DECIMAL(19,0), {lv}) - CONVERT(DECIMAL(19,0), {rv})"
         )
-    tol = _tolerance(f.cfg.tolerance, rv) if f.numeric else None
+    tol = tolerance_sql(f.cfg.tolerance, rv) if f.numeric else None
     if tol is not None:
         equal = f"({lv} IS NULL AND {rv} IS NULL) OR ABS({diff}) <= {tol}"
     else:
@@ -189,7 +162,7 @@ def _compare_columns(f: _Field) -> list[str]:
         whens.append(f"WHEN {_bad('l', f)} OR {_bad('r', f)} THEN 'value_mismatch'")
     whens.append(f"WHEN {equal} THEN NULL")
     whens.append("ELSE 'value_mismatch'")
-    break_expr = "CASE\n" + indent("\n".join(whens), _TAB) + "\nEND"
+    break_expr = "CASE\n" + indent("\n".join(whens), TAB) + "\nEND"
     return [
         f"{f.label}\n{break_expr} AS {f.p}_break",
         f"{_display('l', f)} AS {f.p}_left",
@@ -224,10 +197,10 @@ def _diff_sql(rule: RecordMatchRule, ctx: GenContext, fields: list[_Field]) -> s
     for f in fields:
         keyed_cols += _compare_columns(f)
     keyed = (
-        "SELECT\n" + _block(keyed_cols)
-        + "\nFROM (\n" + _sub(left) + "\n) AS l"
-        + "\nFULL OUTER JOIN (\n" + _sub(right) + "\n) AS r"
-        + f"\n{_TAB}ON r.business_key = l.business_key"
+        "SELECT\n" + block(keyed_cols)
+        + "\nFROM (\n" + sub(left) + "\n) AS l"
+        + "\nFULL OUTER JOIN (\n" + sub(right) + "\n) AS r"
+        + f"\n{TAB}ON r.business_key = l.business_key"
     )
     values = ",\n".join(
         f"(k.{f.p}_break, N'{f.cfg.left}', k.{f.p}_left, k.{f.p}_right, k.{f.p}_diff)" for f in fields
@@ -246,19 +219,19 @@ def _diff_sql(rule: RecordMatchRule, ctx: GenContext, fields: list[_Field]) -> s
         "UNION ALL\n"
         "-- matched keys: one row per breaking compare field\n"
         "SELECT f.break_type, f.field_name, f.left_value, f.right_value, f.diff\n"
-        "FROM (VALUES\n" + _sub(values) + "\n) AS f (break_type, field_name, left_value, right_value, diff)\n"
+        "FROM (VALUES\n" + sub(values) + "\n) AS f (break_type, field_name, left_value, right_value, diff)\n"
         "WHERE k.l_rows = 1 AND k.r_rows = 1 AND f.break_type IS NOT NULL"
     )
     return (
         "SELECT\n"
-        f"{_TAB}CAST(k.business_key AS NVARCHAR(400)) COLLATE DATABASE_DEFAULT AS business_key,\n"
-        f"{_TAB}CAST(b.break_type AS VARCHAR(30)) AS break_type,\n"
-        f"{_TAB}CAST(b.field_name AS NVARCHAR(128)) AS field_name,\n"
-        f"{_TAB}CAST(b.left_value AS NVARCHAR(4000)) COLLATE DATABASE_DEFAULT AS left_value,\n"
-        f"{_TAB}CAST(b.right_value AS NVARCHAR(4000)) COLLATE DATABASE_DEFAULT AS right_value,\n"
-        f"{_TAB}CAST(b.diff AS DECIMAL(38,6)) AS diff\n"
-        "FROM (\n" + _sub(keyed) + "\n) AS k\n"
-        "CROSS APPLY (\n" + _sub(breaks) + "\n) AS b (break_type, field_name, left_value, right_value, diff)"
+        f"{TAB}CAST(k.business_key AS NVARCHAR(400)) COLLATE DATABASE_DEFAULT AS business_key,\n"
+        f"{TAB}CAST(b.break_type AS VARCHAR(30)) AS break_type,\n"
+        f"{TAB}CAST(b.field_name AS NVARCHAR(128)) AS field_name,\n"
+        f"{TAB}CAST(b.left_value AS NVARCHAR(4000)) COLLATE DATABASE_DEFAULT AS left_value,\n"
+        f"{TAB}CAST(b.right_value AS NVARCHAR(4000)) COLLATE DATABASE_DEFAULT AS right_value,\n"
+        f"{TAB}CAST(b.diff AS DECIMAL(38,6)) AS diff\n"
+        "FROM (\n" + sub(keyed) + "\n) AS k\n"
+        "CROSS APPLY (\n" + sub(breaks) + "\n) AS b (break_type, field_name, left_value, right_value, diff)"
     )
 
 
@@ -271,9 +244,5 @@ def generate_record_match(rule: RecordMatchRule, ctx: GenContext) -> GeneratedSq
             used.setdefault(f.mapping.name, f.mapping)
     checks = "\n".join(mapping_ambiguity_check(m, rule.normalize) for m in used.values()) or None
 
-    counts = (
-        "SELECT\n"
-        f"{_TAB}(SELECT COUNT_BIG(*) FROM {ctx.sources[rule.left]} AS s) AS rows_left,\n"
-        f"{_TAB}(SELECT COUNT_BIG(*) FROM {ctx.sources[rule.right]} AS s) AS rows_right"
-    )
+    counts = row_counts_sql(ctx.sources[rule.left], ctx.sources[rule.right])
     return GeneratedSql(checks_sql=checks, counts_sql=counts, diff_sql=_diff_sql(rule, ctx, fields))

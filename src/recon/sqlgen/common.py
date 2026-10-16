@@ -15,8 +15,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
+from textwrap import indent
 
-from recon.config.models import DatasetConfig, MappingConfig, Normalize
+from recon.config.models import DatasetConfig, MappingConfig, Normalize, Tolerance
 from recon.periods import RunPeriod
 
 PARAM_HEADER = "DECLARE @period_start DATE = ?, @period_end_excl DATE = ?, @as_of DATE = ?;\n"
@@ -42,6 +44,23 @@ DIFFS_DDL = (
     ");"
 )
 DIFF_COLUMNS = "business_key, break_type, field_name, left_value, right_value, diff"
+
+# Same pattern for control_total: the executor creates ``#totals`` with this DDL, then runs
+# ``INSERT INTO #totals (<TOTALS_COLUMNS>) SELECT * FROM (<totals_sql>) t`` with bound parameters.
+TOTALS_DDL = (
+    "CREATE TABLE #totals (\n"
+    "    group_key NVARCHAR(400) COLLATE DATABASE_DEFAULT NOT NULL,\n"
+    "    measure NVARCHAR(128) COLLATE DATABASE_DEFAULT NOT NULL,\n"
+    "    left_value DECIMAL(38,6) NOT NULL,\n"
+    "    right_value DECIMAL(38,6) NOT NULL,\n"
+    "    diff DECIMAL(38,6) NOT NULL,\n"
+    "    tolerance_applied DECIMAL(38,6) NOT NULL,\n"
+    "    within_tolerance BIT NOT NULL\n"
+    ");"
+)
+TOTALS_COLUMNS = "group_key, measure, left_value, right_value, diff, tolerance_applied, within_tolerance"
+
+TAB = "    "
 
 NULL_KEY = "∅"  # stands in for a NULL key part inside business_key
 
@@ -179,4 +198,49 @@ def mapping_ambiguity_check(m: MappingConfig, normalize: Normalize | None = None
         "ORDER BY a.from_value;\n"
         f"IF {var} IS NOT NULL\n"
         f"    THROW 50001, {var}, 1;"
+    )
+
+
+# --------------------------------------------------------------------------- layout helpers
+
+
+def column_ref(alias: str, name: str) -> str:
+    """``alias.[name]`` for a single-part column identifier."""
+    if "." in name:
+        raise ValueError(f"column {name!r} must be a single-part identifier")
+    return f"{alias}.{qi(name)}"
+
+
+def block(lines: list[str]) -> str:
+    """Comma-separated select-list entries, indented one level."""
+    return indent(",\n".join(lines), TAB)
+
+
+def sub(sql: str) -> str:
+    """Indent a nested derived table one level."""
+    return indent(sql, TAB)
+
+
+def lit(value: Decimal) -> str:
+    return format(value, "f")
+
+
+def tolerance_sql(tol: Tolerance | None, right: str) -> str | None:
+    """SQL for ``max(abs, pct * |right|)``; None when the comparison is exact."""
+    if tol is None or (tol.abs == 0 and tol.pct == 0):
+        return None
+    if tol.pct == 0:
+        return lit(tol.abs)
+    pct = f"{lit(tol.pct)} * ABS({right})"
+    if tol.abs == 0:
+        return pct
+    return f"CASE WHEN {lit(tol.abs)} >= {pct} THEN {lit(tol.abs)} ELSE {pct} END"
+
+
+def row_counts_sql(left_source: str, right_source: str) -> str:
+    """``counts_sql`` shared by all generators: row counts of the two (period-filtered) sources."""
+    return (
+        "SELECT\n"
+        f"{TAB}(SELECT COUNT_BIG(*) FROM {left_source} AS s) AS rows_left,\n"
+        f"{TAB}(SELECT COUNT_BIG(*) FROM {right_source} AS s) AS rows_right"
     )
