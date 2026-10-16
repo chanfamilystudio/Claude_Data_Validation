@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import UTC, date, datetime
+from decimal import ROUND_HALF_UP, Decimal, localcontext
 
 from recon.model import (
     AuditEntry,
@@ -26,6 +27,15 @@ def utcnow() -> datetime:
     """Naive UTC truncated to milliseconds, like ``SYSUTCDATETIME()`` into DATETIME2(3)."""
     now = datetime.now(UTC).replace(tzinfo=None)
     return now.replace(microsecond=now.microsecond // 1000 * 1000)
+
+
+def dec6(value: Decimal | None) -> Decimal | None:
+    """Round like SQL Server's conversion to DECIMAL(38,6): half away from zero, 6 places."""
+    if value is None:
+        return None
+    with localcontext() as ctx:
+        ctx.prec = 60
+        return Decimal(value).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
 
 
 class InMemoryRepository:
@@ -96,8 +106,10 @@ class InMemoryRepository:
         self.rules.append({"rule_id": rule_id, "version_hash": version_hash, **fields})
 
     # -- runs ----------------------------------------------------------------------------------
-    def open_run(self, trigger, domain, period_label, period_start: date | None, period_end: date | None,
+    def open_run(self, trigger, domain, period_label, period_start: date, period_end: date,
                  git_commit, engine_version) -> int:
+        if period_start is None or period_end is None:
+            raise ValueError("open_run requires period_start and period_end")
         run_id = self._next("run")
         self.runs[run_id] = {
             "run_id": run_id, "trigger": trigger, "domain": domain, "period_label": period_label,
@@ -145,7 +157,9 @@ class InMemoryRepository:
         if run_check_id not in self.checks:
             raise LookupError(f"unknown run_check {run_check_id}")
         for row in rows:
-            self.totals.append({"run_check_id": run_check_id, "row": row})
+            q = dataclasses.replace(row, left_value=dec6(row.left_value), right_value=dec6(row.right_value),
+                                    diff=dec6(row.diff), tolerance_applied=dec6(row.tolerance_applied))
+            self.totals.append({"run_check_id": run_check_id, "row": q})
 
     def checks_for_run(self, run_id: int) -> list[CheckRecord]:
         return [c["rec"] for _, c in sorted(self.checks.items()) if c["rec"].run_id == run_id]
@@ -188,7 +202,7 @@ class InMemoryRepository:
                     "domain": ch.domain, "period_label": ch.period_label,
                     "business_key": obs.business_key, "break_type": obs.break_type,
                     "field_name": obs.field_name, "left_value": obs.left_value,
-                    "right_value": obs.right_value, "diff": obs.diff, "status": "open", "owner": None,
+                    "right_value": obs.right_value, "diff": dec6(obs.diff), "status": "open", "owner": None,
                     "resolution_type": None, "post_signoff": ch.post_signoff,
                     "first_seen_run_id": run_id, "last_seen_run_id": run_id, "resolved_run_id": None,
                     "version": 1, "created_at": now, "updated_at": now,
@@ -216,11 +230,12 @@ class InMemoryRepository:
 
     @staticmethod
     def _values(b: dict, obs, run_id: int) -> None:
-        b.update(left_value=obs.left_value, right_value=obs.right_value, diff=obs.diff, last_seen_run_id=run_id)
+        b.update(left_value=obs.left_value, right_value=obs.right_value, diff=dec6(obs.diff),
+                 last_seen_run_id=run_id)
 
     def _occurrence(self, break_id: int, run_id: int, obs) -> None:
         self.occurrences.append({"break_id": break_id, "run_id": run_id, "left_value": obs.left_value,
-                                 "right_value": obs.right_value, "diff": obs.diff})
+                                 "right_value": obs.right_value, "diff": dec6(obs.diff)})
 
     def breaks_for(self, domain, period_label, statuses=None, resolved_in_run=None) -> list[BreakRecord]:
         out = []
@@ -321,7 +336,9 @@ class InMemoryRepository:
         signoff_id = self._next("signoff")
         self.signoffs[signoff_id] = {
             "domain": row.domain, "period_label": row.period_label, "status": row.status,
-            "row": dataclasses.replace(row, signoff_id=signoff_id), "revoked_by": None,
+            # identity and time are stamped here, never taken from the caller (as in SQL)
+            "row": dataclasses.replace(row, signoff_id=signoff_id, signed_by=self._user, signed_at=utcnow()),
+            "revoked_by": None,
             "revoked_at": None, "revoke_reason": None,
         }
         self._audit("signoff", signoff_id, "status", None, row.status, "cli")

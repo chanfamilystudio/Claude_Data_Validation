@@ -7,7 +7,7 @@ three inspection hooks (they read tables the interface deliberately does not exp
 from __future__ import annotations
 
 import dataclasses
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -110,6 +110,13 @@ class RepositoryContract:
         row = repo.latest_run("employees", P)
         assert row.status == "partial" and isinstance(row.finished_at, datetime)
 
+    def test_open_run_requires_period_dates(self, repo):
+        with pytest.raises(ValueError, match="open_run requires period_start and period_end"):
+            repo.open_run("manual", "employees", P, None, date(2026, 9, 30), None, "0.1.0")
+        with pytest.raises(ValueError, match="open_run requires period_start and period_end"):
+            repo.open_run("manual", "employees", P, date(2026, 9, 1), None, None, "0.1.0")
+        assert repo.latest_run("employees", P) is None
+
     def test_open_run_all_domains_stores_null_domain(self, repo):
         run_id = open_run(repo, domain=None)
         row = repo.latest_run("anything", P)
@@ -192,6 +199,9 @@ class RepositoryContract:
         repo.insert_totals(c1, [t1, t2])
         repo.insert_totals(c2, [t3])
         assert repo.totals_for_run(run_id, None) == [t1, t2, t3]
+        got = repo.totals_for_run(run_id, "employees")[0]
+        assert (str(got.left_value), str(got.right_value), str(got.diff), str(got.tolerance_applied)) == (
+            "100.500000", "100.000000", "0.500000", "0.000000")
         assert repo.totals_for_run(run_id, "employees") == [t1, t2]
         assert repo.totals_for_run(run_id, "payroll") == [t3]
         assert repo.totals_for_run(run_id, "gl") == []
@@ -205,16 +215,18 @@ class RepositoryContract:
         rec = create_break(repo, r1, left="a", right="b", diff=Decimal("1.5"))
         assert (rec.status, rec.version, rec.first_seen_run_id, rec.last_seen_run_id) == ("open", 1, r1, r1)
         assert (rec.left_value, rec.right_value, rec.diff) == ("a", "b", Decimal("1.5"))
+        assert str(rec.diff) == "1.500000"  # DECIMAL(38,6) fidelity
         assert (rec.rule_id, rec.domain, rec.period_label, rec.business_key) == ("emp_name", "employees", P, "E1")
         assert (rec.break_type, rec.field_name, rec.owner, rec.resolution_type) == ("value_mismatch", "name", None, None)
         assert rec.resolved_run_id is None and rec.post_signoff is False and rec.severity == "high"
         assert len(self.occurrence_rows(repo, rec.break_id)) == 1
 
         repo.apply_engine_changes(
-            [change("seen", obs=observed(left="a2", right="b2", diff=Decimal(2)), existing=rec)], r2)
+            [change("seen", obs=observed(left="a2", right="b2", diff=Decimal("1.23456789")), existing=rec)], r2)
         seen = repo.get_break(rec.break_id)
         assert seen.version == 1 and seen.status == "open"
-        assert (seen.left_value, seen.right_value, seen.diff) == ("a2", "b2", Decimal(2))
+        assert (seen.left_value, seen.right_value, seen.diff) == ("a2", "b2", Decimal("1.234568"))
+        assert str(seen.diff) == "1.234568"
         assert seen.last_seen_run_id == r2 and seen.first_seen_run_id == r1
         assert [o["run_id"] for o in self.occurrence_rows(repo, rec.break_id)] == [r1, r2]
 
@@ -259,6 +271,23 @@ class RepositoryContract:
         repo.apply_engine_changes([change("auto_clear", existing=repo.get_break(rec.break_id))], r2)
         last = self.audit_rows(repo)[-1]
         assert (last["old_value"], last["new_value"], last["source"]) == ("investigating", "resolved", "engine")
+
+    def test_decimal_values_round_half_away_from_zero_to_six_places(self, repo):
+        add_rule(repo)
+        run_id = open_run(repo)
+        cases = {"E1": ("2.0000005", "2.000001"), "E2": ("-2.0000005", "-2.000001"),
+                 "E3": ("2.0000004", "2.000000")}
+        for bk, (given, _) in cases.items():
+            create_break(repo, run_id, bk=bk, diff=Decimal(given))
+        got = {b.business_key: str(b.diff) for b in repo.load_breaks("emp_name", P)}
+        assert got == {bk: want for bk, (_, want) in cases.items()}
+        add_rule(repo, "emp_total", version_hash=HASH_B)
+        check_id = repo.record_check(CheckRecord(run_id, "emp_total", HASH_B, "pass", 1, 1, 0, "s", 1, None))
+        repo.insert_totals(check_id, [TotalRow("g", "m", Decimal("1.0000005"), Decimal("-1.0000005"),
+                                               Decimal("1.23456789"), Decimal("0.1"), True)])
+        (t,) = repo.totals_for_run(run_id, None)
+        assert (str(t.left_value), str(t.right_value), str(t.diff), str(t.tolerance_applied)) == (
+            "1.000001", "-1.000001", "1.234568", "0.100000")
 
     def test_create_records_post_signoff(self, repo):
         add_rule(repo)
@@ -497,11 +526,20 @@ class RepositoryContract:
     def test_signoff_insert_active_and_revoke(self, repo):
         add_rule(repo)
         run_id = open_run(repo)
-        user = repo.current_user()
         assert repo.active_signoff("employees", P) is None
-        signoff_id = repo.insert_signoff(signoff_row(run_id, user=user))
+        before = datetime.now(UTC).replace(tzinfo=None)
+        # caller-asserted identity and time are ignored: the store stamps its own
+        signoff_id = repo.insert_signoff(signoff_row(run_id, user="SOMEONE\\else"))
+        after = datetime.now(UTC).replace(tzinfo=None)
         active = repo.active_signoff("employees", P)
-        assert active == dataclasses.replace(signoff_row(run_id, user=user), signoff_id=signoff_id)
+        assert active.signed_by == repo.current_user()
+        assert before - timedelta(seconds=60) <= active.signed_at <= after + timedelta(seconds=60)
+        assert active.signed_at.microsecond % 1000 == 0
+        assert active.signed_at != datetime(2026, 10, 1, 12, 0, 0, 123000)
+        expected = dataclasses.replace(signoff_row(run_id), signoff_id=signoff_id,
+                                       signed_by=active.signed_by, signed_at=active.signed_at)
+        assert active == expected
+        assert all(e.changed_by == repo.current_user() for e in repo.audit_for("employees", P))
         assert repo.active_signoff("payroll", P) is None
         assert repo.active_signoff("employees", "2026-08") is None
 

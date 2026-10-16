@@ -34,8 +34,8 @@ class Repository(Protocol):
     def upsert_rule(self, rule_id: str, version_hash: str, domain: str, check_type: str, severity: str,
                     owner: str, yaml_text: str, active: bool) -> None: ...
 
-    def open_run(self, trigger: str, domain: str | None, period_label: str, period_start: date | None,
-                 period_end: date | None, git_commit: str | None, engine_version: str) -> int: ...
+    def open_run(self, trigger: str, domain: str | None, period_label: str, period_start: date,
+                 period_end: date, git_commit: str | None, engine_version: str) -> int: ...
 
     def close_run(self, run_id: int, status: str) -> None: ...
 
@@ -173,6 +173,8 @@ class SqlRepository:
 
     # -- runs ----------------------------------------------------------------------------------
     def open_run(self, trigger, domain, period_label, period_start, period_end, git_commit, engine_version) -> int:
+        if period_start is None or period_end is None:
+            raise ValueError("open_run requires period_start and period_end")
         return int(self._db.scalar(
             """
             SET NOCOUNT ON;
@@ -436,8 +438,8 @@ class SqlRepository:
                 "SET NOCOUNT ON; INSERT INTO recon.signoff (domain, period_label, run_id, signed_by,"
                 " signed_at, comment, open_break_count, accepted_break_count, evidence_path,"
                 " evidence_sha256, status) OUTPUT inserted.signoff_id"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                row.domain, row.period_label, row.run_id, row.signed_by, row.signed_at, row.comment,
+                " VALUES (?, ?, ?, SUSER_SNAME(), SYSUTCDATETIME(), ?, ?, ?, ?, ?, ?)",
+                row.domain, row.period_label, row.run_id, row.comment,
                 row.open_break_count, row.accepted_break_count, row.evidence_path, row.evidence_sha256,
                 row.status))
             self._db.execute(
