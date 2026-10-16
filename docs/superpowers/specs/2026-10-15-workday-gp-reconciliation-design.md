@@ -128,7 +128,7 @@ Created and upgraded by versioned migration scripts in `sql/migrations/`, tracke
 | `recon.run` | One row per execution | `run_id` (identity); `trigger` (scheduled/manual); `domain` (nullable = all); `period_label`, `period_start`, `period_end`; `status` (running/succeeded/partial/failed); `run_by`; `git_commit`; `engine_version`; `started_at`, `finished_at` |
 | `recon.run_check` | One row per rule in a run | `run_check_id`; `run_id`; `rule_id`, `version_hash`; `result` (pass/fail/error); `rows_left`, `rows_right`; `break_count`; `generated_sql` NVARCHAR(MAX); `duration_ms`; `error_message` |
 | `recon.total_result` | Control-total output | `run_check_id`; `group_key`; `measure`; `left_value`, `right_value`, `diff`; `tolerance_applied`; `within_tolerance` |
-| `recon.break` | Persistent break | `break_id`; `break_key` (unique); `rule_id`; `domain`; `period_label`; `business_key`; `break_type`; `field_name`; `left_value`, `right_value`, `diff`; `status`; `owner`; `resolution_type` (auto_cleared/manual, nullable); `post_signoff` bit; `first_seen_run_id`, `last_seen_run_id`, `resolved_run_id`; `row_version` ROWVERSION; `created_at`, `updated_at` |
+| `recon.break` | Persistent break | `break_id`; `break_key` (unique); `rule_id`; `domain`; `period_label`; `business_key`; `break_type`; `field_name`; `left_value`, `right_value`, `diff`; `status`; `owner`; `resolution_type` (auto_cleared/manual, nullable); `post_signoff` bit; `first_seen_run_id`, `last_seen_run_id`, `resolved_run_id`; `version` INT (starts at 1; incremented only on status/owner changes, reopen, auto-clear — not when a nightly run merely re-sees the break, so older exports stay importable); `created_at`, `updated_at` |
 | `recon.break_occurrence` | Per-run values of a break | (`break_id`, `run_id`); `left_value`, `right_value`, `diff` |
 | `recon.break_comment` | Comments | `comment_id`; `break_id`; `text`; `author`; `created_at`; `import_batch_id` (nullable) |
 | `recon.audit_log` | Every change by engine or human | `audit_id`; `entity` (break/signoff); `entity_id`; `field`; `old_value`; `new_value`; `changed_by`; `changed_at`; `source` (engine/import/cli); `run_id`, `import_batch_id` (nullable) |
@@ -357,7 +357,7 @@ Every transition writes `recon.audit_log`. Breaks created in a signed-off period
 | `Summary` | Run metadata; per-rule result, row counts, break count, severity, error message | no |
 | `Totals` | `recon.total_result` rows; out-of-tolerance highlighted | no |
 | `Breaks` | Breaks with status `open`/`investigating`/`accepted`, plus those resolved in this run. Columns: break_id, rule_id, severity, domain, period, business_key, break_type, field, left, right, diff, first_seen, last_seen, post_signoff, comment history (latest 5) | `Status` (dropdown), `Owner`, `New comment` |
-| `_meta` (very hidden) | export_id, run_id, schema version, exported_by, exported_at; `break_id → row_version` | no |
+| `_meta` (very hidden) | export_id, run_id, schema version, exported_by, exported_at; `break_id → version` | no |
 
 Non-editable cells are locked with sheet protection (convenience only; enforcement happens on import). Rows are sorted by severity, then break_type, then business_key.
 
@@ -367,7 +367,7 @@ Non-editable cells are locked with sheet protection (convenience only; enforceme
 
 1. Reject if `_meta` missing, schema version unsupported, or `file_sha256` already in `recon.import_batch`.
 2. For each `Breaks` row where `Status`, `Owner` or `New comment` differs from the database:
-   - break_id exists; `row_version` matches current (else reject: "changed since export");
+   - break_id exists; `version` matches current (else reject: "changed since export");
    - transition allowed per §6; comment present where required;
    - `Owner` ≤ 128 chars.
 3. Apply all valid rows in one transaction: update `recon.break`, insert `recon.break_comment`, write `recon.audit_log` (source = `import`), insert `recon.import_batch`.
