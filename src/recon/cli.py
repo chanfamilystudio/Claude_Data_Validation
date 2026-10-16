@@ -16,6 +16,7 @@ import typer
 from recon.config.loader import ConfigError, load_project
 from recon.db import Database, LockBusy, connection_string
 from recon.excel.export import export_path, export_workbook
+from recon.excel.importer import WorkbookError, import_workbook
 from recon.executor import execute_run
 from recon.logging_setup import configure_logging
 from recon.migrations import apply_migrations
@@ -221,3 +222,41 @@ def export(
     finally:
         database.close()
     typer.echo(str(path))
+
+
+@app.command("import")
+def import_(
+    file: Annotated[Path, typer.Argument(help="Edited export workbook (.xlsx).")],
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Validate and write the rejects file only.")] = False,
+    root: Annotated[Path, typer.Option("--root", help="Project root containing config/connection.yaml.")] = Path("."),
+) -> None:
+    """Validate an edited export workbook and apply its Status / Owner / comment changes."""
+    if not file.is_file():
+        typer.echo(f"file not found: {file}")
+        raise typer.Exit(2)
+    try:
+        conn_str = connection_string(root, os.environ)
+    except ConfigError as exc:
+        for issue in exc.issues:
+            typer.echo(issue)
+        raise typer.Exit(2) from exc
+    try:
+        database = Database(conn_str)
+    except pyodbc.Error as exc:
+        typer.echo(f"Cannot connect to the database: {exc}")
+        raise typer.Exit(2) from exc
+    try:
+        try:
+            result = import_workbook(SqlRepository(database), file, dry_run=dry_run)
+        except WorkbookError as exc:
+            typer.echo(str(exc))
+            raise typer.Exit(2) from exc
+        except Exception as exc:  # exit 1 would read as "rows rejected"
+            typer.echo(f"Import failed: {exc}")
+            raise typer.Exit(2) from exc
+    finally:
+        database.close()
+    typer.echo(f"{'dry run: ' if dry_run else ''}applied {result.applied}, rejected {result.rejected}")
+    if result.rejects_path is not None:
+        typer.echo(f"rejects: {result.rejects_path}")
+    raise typer.Exit(1 if result.rejected else 0)
