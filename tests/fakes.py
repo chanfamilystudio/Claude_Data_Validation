@@ -288,6 +288,7 @@ class InMemoryRepository:
         bumped: set[int] = set()
         for e in edits:
             b = self.breaks[e.break_id]
+            changed = False
             if e.new_status is not None and e.new_status != b["status"]:
                 old = b["status"]
                 b["status"] = e.new_status
@@ -298,17 +299,19 @@ class InMemoryRepository:
                     b["resolved_run_id"] = None
                 self._audit("break", b["break_id"], "status", old, e.new_status, "import",
                             import_batch_id=batch_id)
+                changed = True
             if e.new_owner is not None and e.new_owner != b["owner"]:
                 old_owner = b["owner"]
                 b["owner"] = e.new_owner
                 self._audit("break", b["break_id"], "owner", old_owner, e.new_owner, "import",
                             import_batch_id=batch_id)
+                changed = True
             if e.comment is not None:
                 self.comments.append({
                     "comment_id": self._next("comment"), "break_id": b["break_id"], "text": e.comment,
                     "author": self._user, "created_at": utcnow(), "import_batch_id": batch_id,
                 })
-            if b["break_id"] not in bumped:
+            if changed and b["break_id"] not in bumped:  # comment-only edits keep the version
                 bumped.add(b["break_id"])
                 b["version"] += 1
             b["updated_at"] = utcnow()

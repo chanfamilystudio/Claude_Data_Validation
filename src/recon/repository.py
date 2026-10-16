@@ -377,17 +377,17 @@ class SqlRepository:
                 " VALUES (?, ?, SUSER_SNAME(), ?, ?)",
                 file_name, file_sha256, len(edits), rows_rejected))
             start_versions: dict[int, int] = {}  # version of each break before this batch touched it
+            bumped: set[int] = set()
             for e in edits:
-                self._apply_edit(e, batch_id, start_versions)
+                self._apply_edit(e, batch_id, start_versions, bumped)
         return batch_id
 
-    def _apply_edit(self, e: UserEdit, batch_id: int, start_versions: dict[int, int]) -> None:
+    def _apply_edit(self, e: UserEdit, batch_id: int, start_versions: dict[int, int], bumped: set[int]) -> None:
         rows = self._db.query(
             "SELECT status, owner, version FROM recon.[break] WITH (UPDLOCK, ROWLOCK) WHERE break_id = ?",
             e.break_id)
         if not rows:
             raise LookupError(f"break {e.break_id} does not exist")
-        first = e.break_id not in start_versions
         start_version = start_versions.setdefault(e.break_id, rows[0]["version"])
         if e.expected_version != start_version:
             raise VersionConflict(e.break_id)  # rolls back the whole batch (caller's transaction)
@@ -409,7 +409,8 @@ class SqlRepository:
             sets.append("owner = ?")
             params.append(e.new_owner)
             audits.append(("owner", old_owner, e.new_owner))
-        if first:
+        if audits and e.break_id not in bumped:  # spec 3: only status/owner changes bump the version
+            bumped.add(e.break_id)
             sets.append("version = version + 1")
         self._db.execute(f"UPDATE recon.[break] SET {', '.join(sets)} WHERE break_id = ?", *params, e.break_id)
 

@@ -478,12 +478,12 @@ class RepositoryContract:
         got = repo.get_break(rec.break_id)
         assert (got.status, got.resolution_type, got.version) == ("accepted", None, 2)
 
-    def test_user_edit_comment_only_bumps_version_without_audit(self, repo):
+    def test_user_edit_comment_only_keeps_version_without_audit(self, repo):
         add_rule(repo)
         rec = create_break(repo, open_run(repo))
         repo.apply_user_edits([edit(rec.break_id, comment="looking")], "a.xlsx", "1" * 64, 0)
         got = repo.get_break(rec.break_id)
-        assert (got.status, got.owner, got.version) == ("open", None, 2)
+        assert (got.status, got.owner, got.version) == ("open", None, 1)  # spec 3: status/owner changes only
         assert [r for r in self.audit_rows(repo) if r["source"] == "import"] == []
         assert [c.text for c in repo.comments_for([rec.break_id])[rec.break_id]] == ["looking"]
 
@@ -495,6 +495,15 @@ class RepositoryContract:
         fields = [(r["field"], r["old_value"], r["new_value"]) for r in self.audit_rows(repo)
                   if r["source"] == "import"]
         assert fields == [("owner", None, "bob")]
+
+    def test_unchanged_status_owner_with_comment_keeps_version(self, repo):
+        add_rule(repo)
+        rec = create_break(repo, open_run(repo))
+        repo.apply_user_edits([edit(rec.break_id, status="open", comment="still open")], "a.xlsx", "1" * 64, 0)
+        assert repo.get_break(rec.break_id).version == 1
+        repo.apply_user_edits([edit(rec.break_id, comment="c"), edit(rec.break_id, owner="bob")],
+                              "b.xlsx", "2" * 64, 0)
+        assert repo.get_break(rec.break_id).version == 2
 
     def test_version_bumps_once_per_edited_break(self, repo):
         add_rule(repo)
@@ -563,8 +572,8 @@ class RepositoryContract:
         c = create_break(repo, run_id, bk="E3")
         repo.apply_user_edits([edit(a.break_id, comment="first"), edit(b.break_id, comment="b1")],
                               "1.xlsx", "1" * 64, 0)
-        repo.apply_user_edits([edit(a.break_id, comment="second", version=2)], "2.xlsx", "2" * 64, 0)
-        repo.apply_user_edits([edit(a.break_id, comment="third", version=3)], "3.xlsx", "3" * 64, 0)
+        repo.apply_user_edits([edit(a.break_id, comment="second")], "2.xlsx", "2" * 64, 0)
+        repo.apply_user_edits([edit(a.break_id, comment="third")], "3.xlsx", "3" * 64, 0)
         got = repo.comments_for([a.break_id, b.break_id, c.break_id, 424242])
         assert set(got) == {a.break_id, b.break_id}
         assert [x.text for x in got[a.break_id]] == ["first", "second", "third"]
