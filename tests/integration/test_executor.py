@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
+from pathlib import Path
 
 import pyodbc
 import pytest
@@ -452,10 +454,14 @@ def test_cli_run_writes_workbook_and_export_command(staging, dsn, tmp_fixture, m
     assert res.output.strip() == str(path) and path.is_file()
     assert [r["Status"] for r in _breaks_sheet(path)] == ["resolved"]
 
+    all_before = all_book.read_bytes()
     res = CliRunner().invoke(app, ["export", "--all", "--period", "2026-09", "--root", str(tmp_fixture)])
     assert res.exit_code == 0, res.output
-    latest = tmp_fixture / "exports" / "recon_all_2026-09_latest.xlsx"
-    assert latest.is_file()
+    # named after the run it shows (run2); the run's own workbook already has that name and is kept
+    latest = Path(res.output.strip())
+    assert latest.parent == tmp_fixture / "exports" and latest.is_file()
+    assert re.fullmatch(rf"recon_all_2026-09_{run2}_\d{{8}}T\d{{6}}\.xlsx", latest.name), latest.name
+    assert all_book.read_bytes() == all_before
     # latest-mode lists the breaks resolved in the run it shows
     assert [(r["business_key"], r["Status"]) for r in _breaks_sheet(latest)] == [("000002", "resolved")]
 

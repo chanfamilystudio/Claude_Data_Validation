@@ -63,7 +63,7 @@ def test_sheets_headers_and_atomic_write(repo, out):
     create_break(repo, run)
     path = _export(repo, out, run_id=run)
     assert path == out and out.is_file()
-    assert not out.with_name("book.xlsx.tmp").exists()
+    assert list(out.parent.iterdir()) == [out]  # the temp file is gone
     wb = load_workbook(out)
     assert wb.sheetnames == ["Summary", "Totals", "Breaks", "_meta"]
     assert [c.value for c in wb["Breaks"][1]] == layout.BREAK_COLUMNS
@@ -120,7 +120,7 @@ def test_resolved_breaks_only_when_resolved_in_this_run(repo, out):
     keys = {ws.cell(r, 6).value: ws.cell(r, 16).value for r in range(2, ws.max_row + 1)}
     assert keys == {"K": "open", "G": "resolved"}
     # latest-mode export (no run id) lists what was resolved in the run it shows (run2), not earlier ones
-    ws = load_workbook(_export(repo, out))["Breaks"]
+    ws = load_workbook(_export(repo, out.with_name("latest.xlsx")))["Breaks"]
     assert {ws.cell(r, 6).value for r in range(2, ws.max_row + 1)} == {"K", "G"}
 
 
@@ -143,7 +143,7 @@ def test_domain_and_snapshot_filtering(repo, out):
     ws = load_workbook(_export(repo, out, run_id=run))["Breaks"]
     assert {(ws.cell(r, 6).value, ws.cell(r, 5).value) for r in range(2, ws.max_row + 1)} == {
         ("E1", P), ("S1", "SNAPSHOT")}
-    ws = load_workbook(_export(repo, out, domain=None, run_id=run))["Breaks"]
+    ws = load_workbook(_export(repo, out.with_name("all.xlsx"), domain=None, run_id=run))["Breaks"]
     assert {ws.cell(r, 6).value for r in range(2, ws.max_row + 1)} == {"E1", "S1", "P1"}
 
 
@@ -353,6 +353,31 @@ def test_text_longer_than_an_excel_cell_is_truncated_with_a_marker(repo, out):
     assert len(text) - len(m.group(0)) + int(m.group(1)) == 40_000
 
 
+def test_export_refuses_to_overwrite_an_existing_file(repo, out):
+    out.parent.mkdir(parents=True)
+    out.write_bytes(b"earlier export")
+    with pytest.raises(FileExistsError):
+        _export(repo, out)
+    assert out.read_bytes() == b"earlier export"
+    assert list(out.parent.iterdir()) == [out]  # no temp file left behind
+
+
+def test_export_does_not_overwrite_a_file_that_appears_while_writing(repo, out, monkeypatch):
+    from recon.excel import export as export_mod
+
+    real_save = export_mod.Workbook.save
+
+    def save_then_race(self, filename):
+        real_save(self, filename)
+        out.write_bytes(b"someone else")
+
+    monkeypatch.setattr(export_mod.Workbook, "save", save_then_race)
+    with pytest.raises(FileExistsError):
+        _export(repo, out)
+    assert out.read_bytes() == b"someone else"
+    assert list(out.parent.iterdir()) == [out]
+
+
 def test_evidence_requires_a_domain(repo, out):
     with pytest.raises(ValueError, match="domain"):
         _export(repo, out, domain=None, evidence=True)
@@ -368,7 +393,7 @@ def test_failed_export_leaves_no_partial_file(repo, out, monkeypatch):
     create_break(repo, 1)
     with pytest.raises(RuntimeError):
         _export(repo, out)
-    assert not out.exists() and not out.with_name("book.xlsx.tmp").exists()
+    assert not out.exists() and (not out.parent.exists() or list(out.parent.iterdir()) == [])
 
 
 def test_single_domain_workbooks_only_carry_that_domains_checks(repo, out):
@@ -377,10 +402,10 @@ def test_single_domain_workbooks_only_carry_that_domains_checks(repo, out):
     repo.record_check(_check(run, "pay_tot", "error", err="secret failure", sql="SELECT payroll"))
     create_break(repo, run, bk="E1")
     for evidence in (False, True):
-        wb = load_workbook(_export(repo, out, run_id=run, evidence=evidence))
+        wb = load_workbook(_export(repo, out.with_name(f"evidence_{evidence}.xlsx"), run_id=run, evidence=evidence))
         assert [r[0] for r in _rows(wb["Summary"])[9:]] == ["emp_name"]
         assert "secret failure" not in {c.value for row in wb["Summary"].iter_rows() for c in row}
         if evidence:
             assert _rows(wb["SQL"])[1:] == [["emp_name", 1, "SELECT employees"]]
-    wb = load_workbook(_export(repo, out, domain=None, run_id=run))
+    wb = load_workbook(_export(repo, out.with_name("all.xlsx"), domain=None, run_id=run))
     assert [r[0] for r in _rows(wb["Summary"])[9:]] == ["emp_name", "pay_tot"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import uuid
 from datetime import UTC, datetime
@@ -34,6 +35,21 @@ def export_path(export_dir: Path, domain: str | None, period_label: str, run_id:
     """``<export_dir>/recon_<domain|all>_<period>_<run_id or "latest">.xlsx``."""
     suffix = run_id if run_id is not None else "latest"
     return Path(export_dir) / f"recon_{domain or 'all'}_{period_label}_{suffix}.xlsx"
+
+
+def free_export_path(export_dir: Path, domain: str | None, period_label: str, run_id: int | None,
+                     now: datetime | None = None) -> Path:
+    """:func:`export_path`, or when that file exists ``<stem>_<UTC yyyymmddTHHMMSS>[_<n>].xlsx``."""
+    base = export_path(export_dir, domain, period_label, run_id)
+    if not base.exists():
+        return base
+    stamp = (now or datetime.now(UTC)).astimezone(UTC).strftime("%Y%m%dT%H%M%S")
+    candidate = base.with_name(f"{base.stem}_{stamp}{base.suffix}")
+    n = 2
+    while candidate.exists():
+        candidate = base.with_name(f"{base.stem}_{stamp}_{n}{base.suffix}")
+        n += 1
+    return candidate
 
 
 def _clean(value: Any) -> Any:
@@ -194,11 +210,14 @@ def export_workbook(repo: Repository, *, domain: str | None, period_label: str, 
     ``run_id`` selects the run shown on Summary / Totals / SQL and the break set (breaks resolved in
     that run are included); when ``None`` the latest run covering ``domain`` is shown and the breaks
     resolved in *that* run are included.  Evidence mode lists every break, adds the
-    Comments / Audit / SQL sheets and leaves nothing editable.
+    Comments / Audit / SQL sheets and leaves nothing editable.  An existing ``out_path`` is never
+    overwritten (``FileExistsError``).
     """
     if evidence and domain is None:
         raise ValueError("evidence export requires a domain")
     out_path = Path(out_path)
+    if out_path.exists():
+        raise FileExistsError(errno.EEXIST, "export file already exists", str(out_path))
     exported_by = repo.current_user()
 
     run = repo.get_run(run_id) if run_id is not None else repo.latest_run(domain, period_label)
@@ -239,11 +258,10 @@ def export_workbook(repo: Repository, *, domain: str | None, period_label: str, 
         _protect(ws)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out_path.with_name(out_path.name + ".tmp")
+    tmp = out_path.with_name(f".{out_path.name}.{uuid.uuid4().hex}.tmp")
     try:
         wb.save(tmp)
-        os.replace(tmp, out_path)
-    except BaseException:
+        os.link(tmp, out_path)  # atomic and, unlike os.replace, fails if out_path appeared meanwhile
+    finally:
         tmp.unlink(missing_ok=True)
-        raise
     return out_path

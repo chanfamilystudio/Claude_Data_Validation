@@ -123,8 +123,10 @@ recon signoff revoke --domain D --period P --reason "..." [--root R]
   without a `period_column` are snapshot rules and run inside every period's run (their breaks carry the period
   label `SNAPSHOT` and show up in every period's workbook and sign-off).
 - Every `run` writes a review workbook to `<export_dir>\recon_<domain|all>_<period>_<run_id>.xlsx` unless
-  `--no-export` is given; a failed export is a warning, never a different exit code. `recon export` writes
-  `recon_<domain|all>_<period>_latest.xlsx` (or `_<run_id>` with `--run-id`).
+  `--no-export` is given; a failed export is a warning, never a different exit code. `recon export` names its
+  file after the run it shows, `recon_<domain|all>_<period>_<run_id>.xlsx` (the latest run, or `--run-id`), and
+  uses `_latest` only when the period has no run yet. **Exports never overwrite a file:** if the name is taken,
+  `_<UTC yyyymmddTHHMMSS>` (and, if needed, a counter `_2`, `_3`, ...) is appended.
 - Running against a period that is already signed off prints
   `warning: <domain> <period> is signed off; new breaks are flagged post_signoff` and carries on.
 
@@ -221,10 +223,10 @@ rule that errors never changes the breaks of that rule (they are left exactly as
 4. `recon signoff revoke --domain D --period P --reason "..."` (signer only) marks the sign-off `revoked`. The
    evidence file is kept. After a revoke the period can be signed off again; each sign-off gets a new timestamped file.
 
-**The evidence folder must be on NTFS (or another file system that supports hard links).** Evidence files are
-created by writing a private temporary file in the target folder and then *hard-linking* it to its final name; the
-link fails if the name already exists, which is how an existing evidence file is guaranteed never to be
-overwritten. On a share, make sure the volume behind it is NTFS and test it once
+**The evidence and export folders must be on NTFS (or another file system that supports hard links).**
+Evidence files and exports are created by writing a private temporary file in the target folder and then
+*hard-linking* it to its final name; the link fails if the name already exists, which is how an existing evidence
+file or export is guaranteed never to be overwritten. On a share, make sure the volume behind it is NTFS and test it once
 (`fsutil hardlink create C:\path\to\evidence\link.test C:\path\to\evidence\some.file` on the file server, or
 a trial `recon signoff` on a test period).
 

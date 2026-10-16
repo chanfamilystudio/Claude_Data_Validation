@@ -16,7 +16,7 @@ import typer
 
 from recon.config.loader import ConfigError, Project, load_project
 from recon.db import Database, LockBusy, connection_string
-from recon.excel.export import export_path, export_workbook
+from recon.excel.export import export_workbook, free_export_path
 from recon.excel.importer import WorkbookError, import_workbook
 from recon.executor import execute_run
 from recon.logging_setup import configure_logging
@@ -83,7 +83,7 @@ def run_exporter(repo: Repository, export_dir: Path, domain: str | None,
     def export(run_id: int) -> Path | None:
         try:
             return export_workbook(repo, domain=domain, period_label=period_label, run_id=run_id,
-                                   out_path=export_path(export_dir, domain, period_label, run_id))
+                                   out_path=free_export_path(export_dir, domain, period_label, run_id))
         except Exception as exc:
             logging.getLogger("recon").warning("export of run %s failed: %s", run_id, exc, exc_info=True)
             typer.echo(f"Warning: workbook export failed: {exc}")
@@ -216,8 +216,11 @@ def export(
                 if domain is not None and run_row.domain not in (None, domain):
                     typer.echo(f"run {run_id} covers domain {run_row.domain!r}, not {domain!r}")
                     raise typer.Exit(2)
+            else:  # name the file after the run it shows; "latest" only when there is no run
+                latest = repo.latest_run(domain, label)
+                run_id = latest.run_id if latest is not None else None
             path = export_workbook(repo, domain=domain, period_label=label, run_id=run_id,
-                                   out_path=export_path(project.settings.export_dir, domain, label, run_id))
+                                   out_path=free_export_path(project.settings.export_dir, domain, label, run_id))
         except typer.Exit:
             raise
         except Exception as exc:  # exit 1 would read as "breaks found"
