@@ -234,7 +234,7 @@ a trial `recon signoff` on a test period).
 
 | Folder (default) | Who writes | Who reads | Notes |
 |---|---|---|---|
-| `exports\` | Service account, every analyst who runs `recon run` / `recon export` | Reviewers | Workbooks contain break details (PII only as `***`) but may name employees and accounts; restrict to the finance and HR reviewers. Safe to clean up: workbooks can be regenerated with `recon export`. |
+| `exports\` | Service account, every analyst who runs `recon run` / `recon export` | Reviewers | Workbooks contain break details and may name employees and accounts; only `record_match` compare fields marked `pii: true` are masked as `***` (quality and mapping breaks show values as stored, see section 11); restrict to the finance and HR reviewers. Safe to clean up: workbooks can be regenerated with `recon export`. |
 | `evidence\` | The people who sign off (and the service account if it ever does) | Auditors (read-only) | Evidence is frozen: files are read-only and hashed. IT should grant *create* but not *modify/delete* on files, and keep backups. Must be NTFS (see above). |
 | `logs\` | Every account that runs `recon` | Operators | See below. |
 
@@ -259,8 +259,12 @@ with the exact generated SQL, `recon.audit_log`), not in the log file.
   ignored); write `[A-Z]` or `[a-z]` as intended.
 - **Keys and strings** are trimmed and compared case-insensitively by default (`normalize`), so `e001 ` and
   `E001` are the same key.
-- **PII columns** (`pii: true`) are compared by SHA-256 hash and stored, exported and logged only as `***`. They
-  cannot be used as keys and cannot have a tolerance.
+- **PII columns** (`pii: true` on a `record_match` compare field) are compared by SHA-256 hash and their break
+  values are stored and exported only as `***`. They cannot be used as keys and cannot have a tolerance.
+  **Masking applies only there:** `quality` and `mapping` breaks store and export values as-is: the offending
+  value (`left_value` of `accepted_values`, `references` and `like`), the duplicated value of `unique` and the
+  source value of a `mapping` rule (both as `business_key`), and the quality rule's `key` columns (as
+  `business_key`). So quality and mapping assertions and quality `key`s must not target PII columns.
 - **Quality break `field`** is `<assertion>:<column>` for `not_null`, `accepted_values`, `references` and `like`
   (e.g. `not_null:DEPRTMNT`, `references:DEPRTMNT`), `unique:<col>,<col>` for `unique`, and the assertion's `name`
   for `custom_sql`, so two assertions on the same column give separate breaks.
