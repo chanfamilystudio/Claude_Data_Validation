@@ -10,6 +10,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+from conftest import READ_ONLY_MODE
 from recon.cli import app
 from recon.db import Database
 from recon.model import UserEdit
@@ -53,7 +54,7 @@ def test_cli_signoff_round_trip(staging, dsn, tmp_fixture, monkeypatch, _reset_r
     assert (row["open_break_count"], row["accepted_break_count"]) == (0, len(open_breaks))
     evidence = Path(row["evidence_path"])
     assert evidence.is_file() and evidence.parent == tmp_fixture / "evidence" / "employees" / "2026-09"
-    assert stat.S_IMODE(evidence.stat().st_mode) == stat.S_IREAD
+    assert stat.S_IMODE(evidence.stat().st_mode) == READ_ONLY_MODE
     assert hashlib.sha256(evidence.read_bytes()).hexdigest() == row["evidence_sha256"]
     assert res.output.strip() == f"Signed off employees 2026-09 (sign-off {row['signoff_id']}): {evidence}"
 

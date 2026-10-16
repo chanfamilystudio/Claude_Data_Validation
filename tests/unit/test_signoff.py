@@ -11,6 +11,7 @@ import pyodbc
 import pytest
 from typer.testing import CliRunner
 
+from conftest import READ_ONLY_MODE
 from fakes import InMemoryRepository
 from recon import cli, signoff
 from recon.breaks import plan_merge
@@ -160,7 +161,7 @@ def test_sign_off_writes_read_only_evidence_and_records_it(project, repo):
                     / "recon_evidence_employees_2026-09_20261002T140509Z.xlsx").resolve()
     assert [p.name for p in path.parent.iterdir()] == [path.name]  # no temp file left behind
     assert path.is_file()
-    assert stat.S_IMODE(path.stat().st_mode) == stat.S_IREAD
+    assert stat.S_IMODE(path.stat().st_mode) == READ_ONLY_MODE
     assert row.evidence_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
     assert (row.domain, row.period_label, row.run_id, row.status) == ("employees", P, run, "signed")
     assert (row.signed_by, row.comment) == (USER, "September done")
@@ -283,7 +284,7 @@ def test_insert_outcome_unknown_keeps_the_evidence_file(project, repo, monkeypat
     assert exc.value.__cause__ is error and exc.value.evidence_path == final
     message = str(exc.value)
     assert "check recon.signoff for employees 2026-09" in message and str(final) in message
-    assert final.is_file() and stat.S_IMODE(final.stat().st_mode) == stat.S_IREAD
+    assert final.is_file() and stat.S_IMODE(final.stat().st_mode) == READ_ONLY_MODE
     assert hashlib.sha256(final.read_bytes()).hexdigest() == calls[0].evidence_sha256
     assert [p.name for p in final.parent.iterdir()] == [final.name]  # no temp file left
 
@@ -314,7 +315,7 @@ def test_existing_evidence_file_is_never_overwritten(project, repo):
     os.chmod(final, stat.S_IREAD)
     assert refused(project, repo) == [f"evidence file already exists: {final}; retry"]
     assert final.read_bytes() == b"frozen evidence"
-    assert stat.S_IMODE(final.stat().st_mode) == stat.S_IREAD
+    assert stat.S_IMODE(final.stat().st_mode) == READ_ONLY_MODE
     assert [p.name for p in final.parent.iterdir()] == [final.name]  # our temp file is gone
     assert repo.active_signoff("employees", P) is None
 
