@@ -69,13 +69,29 @@ def test_norm_string_variants():
 
 @pytest.mark.parametrize(
     ("type_", "sql_type"),
-    [("decimal", "DECIMAL(38,6)"), ("int", "BIGINT"), ("date", "DATE"), ("datetime", "DATETIME2(3)"), ("bool", "BIT")],
+    [("decimal", "DECIMAL(38,6)"), ("date", "DATE"), ("datetime", "DATETIME2(3)")],
 )
 def test_typed_try_casts_with_blank_as_null(type_, sql_type):
-    assert typed("s.[c]", type_) == (
-        "TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[c], 126))) = N'' THEN NULL ELSE s.[c] END"
-        f" AS {sql_type})"
+    assert typed("s.[c]", type_) == f"TRY_CAST({_BLANK_TO_NULL} AS {sql_type})"
+
+
+_BLANK_TO_NULL = "CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[c], 126))) = N'' THEN NULL ELSE s.[c] END"
+_DEC = f"TRY_CAST({_BLANK_TO_NULL} AS DECIMAL(38,6))"
+
+
+def test_typed_int_goes_through_decimal_and_rejects_fractions():
+    assert typed("s.[c]", "int") == f"TRY_CAST(CASE WHEN {_DEC} % 1 = 0 THEN {_DEC} END AS BIGINT)"
+
+
+def test_typed_bool_accepts_only_known_words_and_zero_or_one():
+    word = norm_string("s.[c]", Normalize(trim=True, case_insensitive=True))
+    assert typed("s.[c]", "bool") == (
+        f"CAST(CASE WHEN {word} IN (N'1', N'TRUE', N'YES', N'Y') THEN 1"
+        f" WHEN {word} IN (N'0', N'FALSE', N'NO', N'N') THEN 0"
+        f" WHEN {_DEC} = 1 THEN 1 WHEN {_DEC} = 0 THEN 0 END AS BIT)"
     )
+    # the rule's normalize does not change which words count
+    assert typed("s.[c]", "bool", Normalize(trim=False, case_insensitive=False)) == typed("s.[c]", "bool")
 
 
 def test_typed_string_is_norm_string():

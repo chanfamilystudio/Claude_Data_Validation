@@ -143,11 +143,18 @@ def norm_string(expr: str, normalize: Normalize) -> str:
     return out
 
 
+_BOOL_TRUE = "N'1', N'TRUE', N'YES', N'Y'"
+_BOOL_FALSE = "N'0', N'FALSE', N'NO', N'N'"
+
+
 def typed(expr: str, type_: str, normalize: Normalize | None = None) -> str:
     """``expr`` cast to the compare type; NULL when the cast fails.
 
     Blank text is NULL for non-string types (SQL Server would otherwise turn ``''`` into 0, 1900-01-01
     or false). The CASE keeps ``expr``'s own type, so floats are not round-tripped through text.
+    Casts never lose information: ``int`` goes through DECIMAL(38,6) and a value with a fractional
+    part fails (rather than being truncated); ``bool`` accepts only numbers equal to 0 or 1 and the
+    texts true/false/yes/no/y/n/1/0 (trimmed, any case), anything else fails.
     """
     if type_ == "string":
         return norm_string(expr, normalize or Normalize())
@@ -156,6 +163,16 @@ def typed(expr: str, type_: str, normalize: Normalize | None = None) -> str:
     except KeyError:
         raise ValueError(f"unknown compare type {type_!r}") from None
     blank_to_null = f"CASE WHEN LTRIM(RTRIM({text_of(expr)})) = N'' THEN NULL ELSE {expr} END"
+    if type_ == "int":
+        dec = f"TRY_CAST({blank_to_null} AS DECIMAL(38,6))"
+        return f"TRY_CAST(CASE WHEN {dec} % 1 = 0 THEN {dec} END AS {sql_type})"
+    if type_ == "bool":
+        word = norm_string(expr, Normalize(trim=True, case_insensitive=True))
+        dec = f"TRY_CAST({blank_to_null} AS DECIMAL(38,6))"
+        return (
+            f"CAST(CASE WHEN {word} IN ({_BOOL_TRUE}) THEN 1 WHEN {word} IN ({_BOOL_FALSE}) THEN 0"
+            f" WHEN {dec} = 1 THEN 1 WHEN {dec} = 0 THEN 0 END AS {sql_type})"
+        )
     return f"TRY_CAST({blank_to_null} AS {sql_type})"
 
 

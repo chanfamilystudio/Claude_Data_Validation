@@ -22,6 +22,7 @@ SNAPSHOT_PARAMS = params_for(None, AS_OF)
 _TABLES = (
     "t_wd.workers", "t_gp.employees", "t_xref.cc_map", "t_wd.ck", "t_gp.ck",
     "t_wd.jrnl", "t_gp.gl", "t_wd.cs", "t_gp.cs", "t_wd.lossy", "t_gp.lossy", "t_xref.plain_map",
+    "t_wd.typed", "t_gp.typed",
 )
 _SCHEMAS = ("t_wd", "t_gp", "t_xref")
 
@@ -318,6 +319,39 @@ def test_float_and_datetime_compared_as_string_are_lossless(schemas):
     assert _diffs(db, g.diff_sql, SNAPSHOT_PARAMS) == {
         (key, "value_mismatch", "f", "1.234567800000000E+005", "1.234567900000000E+005", None),
         (key, "value_mismatch", "d", "2026-09-30T14:35:07", "2026-09-30T14:35:08", None),
+    }
+
+
+def test_int_and_bool_casts_are_not_lossy(schemas):
+    """`int` goes through DECIMAL(38,6): a fractional value is a failed cast, not rounded or truncated.
+    `bool` accepts 0/1 numbers and true/false/yes/no/y/n/1/0 text only; anything else is a failed cast."""
+    db = schemas
+    db.execute("CREATE TABLE t_wd.typed (k NVARCHAR(10), i INT, b NVARCHAR(10))")
+    db.execute("CREATE TABLE t_gp.typed (k NVARCHAR(10), i NUMERIC(19,5), b BIT)")
+    rows = (  # k, left int, right numeric(19,5), left bool text, right bit
+        ("K1", 100, "100.70000", "1", 1),
+        ("K2", 100, "100.00000", "y", 1),
+        ("K3", 5, "5", "2", 1),
+        ("K4", 5, "5", "TRUE", 1),
+        ("K5", 5, "5", " No ", 0),
+        ("K6", 5, "5", "maybe", 0),
+        ("K7", 5, "5.00001", "false", 0),
+    )
+    for k, li, ri, lb, rb in rows:
+        db.execute("INSERT INTO t_wd.typed VALUES (?, ?, ?)", k, li, lb)
+        db.execute("INSERT INTO t_gp.typed VALUES (?, ?, ?)", k, Decimal(ri), rb)
+    rule = _rule(
+        left="wd_typed",
+        right="gp_typed",
+        keys=[{"left": "k", "right": "k"}],
+        compare=[{"left": "i", "right": "i", "type": "int"}, {"left": "b", "right": "b", "type": "bool"}],
+    )
+    g = generate(rule, _ctx(_ds("wd_typed", "t_wd.typed"), _ds("gp_typed", "t_gp.typed")))
+    assert _diffs(db, g.diff_sql, SNAPSHOT_PARAMS) == {
+        ("K1", "value_mismatch", "i", "100", "100.70000", None),  # was truncated to 100 = equal
+        ("K7", "value_mismatch", "i", "5", "5.00001", None),  # 6th decimal still counts
+        ("K3", "value_mismatch", "b", "2", "1", None),  # was any non-zero = true
+        ("K6", "value_mismatch", "b", "maybe", "0", None),
     }
 
 
