@@ -1,0 +1,5 @@
+# Sign-off allow-list: domain -> Windows logins (SUSER_SNAME()) allowed to sign that domain.
+# Example:
+#   employees: ["CORP\\hr.lead"]
+#   payroll:   ["CORP\\payroll.mgr"]
+signers: {}

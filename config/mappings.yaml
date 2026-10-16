@@ -1,0 +1,7 @@
+# Example mapping (uncomment and adapt):
+#   cc_to_dept:
+#     object: xref.cost_center_map
+#     from: wd_cost_center
+#     to: gp_dept
+#     effective: {start: eff_start, end: eff_end}   # optional effective dating
+mappings: {}

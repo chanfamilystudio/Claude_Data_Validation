@@ -1,0 +1,16 @@
+id: gp_emp_quality
+domain: employees
+check_type: quality
+description: GP employee master hygiene
+severity: low
+dataset: gp_employees
+key: [EMPLOYID]
+assertions:
+  - not_null: [EMPLOYID, DEPRTMNT]
+  - unique: [EMPLOYID]
+  - accepted_values: {column: INACTIVE, values: [0, 1]}
+  - references: {column: DEPRTMNT, dataset: gp_departments, ref_column: DEPRTMNT}
+  - like: {column: EMPLOYID, pattern: "[0-9][0-9][0-9][0-9][0-9][0-9]"}
+  - custom_sql:
+      name: future_hire_dates
+      sql: "SELECT EMPLOYID AS business_key FROM {dataset} WHERE STRTDATE > GETDATE()"

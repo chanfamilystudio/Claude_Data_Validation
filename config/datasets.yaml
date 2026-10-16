@@ -1,0 +1,13 @@
+# Logical sources -> connector. Datasets point at a source plus a table/view.
+sources:
+  workday: {connector: sqlserver}
+  gp:      {connector: sqlserver}
+
+# Example dataset (uncomment and adapt):
+#   wd_workers:
+#     source: workday
+#     object: stg_wd.workers          # schema.table or view
+#     period_column: null             # null = snapshot (master data)
+#     filter: "SOURCDOC = 'UPRCC'"    # optional, trusted SQL
+#     freshness: {column: load_ts, max_age_hours: 26}   # optional
+datasets: {}

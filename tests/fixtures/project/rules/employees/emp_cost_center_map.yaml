@@ -1,0 +1,9 @@
+id: emp_cost_center_map
+domain: employees
+check_type: mapping
+description: Every Workday cost center maps to a GP department
+severity: medium
+dataset: wd_workers
+column: cost_center
+mapping: cc_to_dept
+target: {dataset: gp_departments, column: DEPRTMNT}

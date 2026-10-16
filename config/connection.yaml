@@ -1,0 +1,5 @@
+# Read by `recon` commands that talk to SQL Server (not by the rule loader).
+driver: ODBC Driver 18 for SQL Server
+server: localhost
+database: Finance
+trusted_connection: true

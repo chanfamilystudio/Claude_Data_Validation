@@ -1,0 +1,27 @@
+sources:
+  workday: {connector: sqlserver}
+  gp:      {connector: sqlserver}
+
+datasets:
+  wd_workers:
+    source: workday
+    object: stg_wd.workers
+    period_column: null
+  gp_employees:
+    source: gp
+    object: stg_gp.UPR00100
+    period_column: null
+  gp_departments:
+    source: gp
+    object: stg_gp.UPR40300
+    period_column: null
+  wd_pay_jrnl:
+    source: workday
+    object: stg_wd.payroll_journal
+    period_column: pay_date
+    freshness: {column: load_ts, max_age_hours: 26}
+  gp_gl_pay:
+    source: gp
+    object: stg_gp.GL20000
+    period_column: TRXDATE
+    filter: "SOURCDOC = 'UPRCC'"

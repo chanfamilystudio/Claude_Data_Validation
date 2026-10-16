@@ -1,0 +1,14 @@
+id: emp_master_match
+domain: employees
+check_type: record_match
+description: Workday workers vs GP employee master
+owner: hris-team
+severity: high
+left: wd_workers
+right: gp_employees
+keys: [{left: employee_id, right: EMPLOYID}]
+compare:
+  - {left: cost_center,   right: DEPRTMNT, via_mapping: cc_to_dept}
+  - {left: hire_date,     right: STRTDATE, type: date}
+  - {left: annual_salary, right: SALARY,   type: decimal, tolerance: {abs: 0.01}}
+  - {left: national_id,   right: SOCSCNUM, pii: true}

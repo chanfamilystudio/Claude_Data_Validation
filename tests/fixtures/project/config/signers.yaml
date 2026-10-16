@@ -1,0 +1,3 @@
+signers:
+  employees: ["TEST\\signer"]
+  payroll: ["TEST\\signer"]

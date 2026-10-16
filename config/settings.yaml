@@ -1,0 +1,4 @@
+# Relative paths are resolved against the project root.
+export_dir: exports
+evidence_dir: evidence
+log_dir: logs
