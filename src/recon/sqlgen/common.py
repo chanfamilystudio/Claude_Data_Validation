@@ -108,6 +108,14 @@ class GeneratedSql:
 # --------------------------------------------------------------------------- expression helpers
 
 
+def source_for(ctx: GenContext, dataset: str) -> str:
+    """The SQL source of a dataset referenced by a rule."""
+    try:
+        return ctx.sources[dataset]
+    except KeyError:
+        raise ValueError(f"unknown dataset {dataset!r}") from None
+
+
 def qi(identifier: str) -> str:
     """Validate a one- or two-part identifier and bracket-quote each part."""
     if not isinstance(identifier, str) or not _IDENTIFIER_RE.fullmatch(identifier):

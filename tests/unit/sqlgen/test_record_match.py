@@ -1,4 +1,5 @@
 import re
+from types import SimpleNamespace
 
 import pytest
 
@@ -120,5 +121,6 @@ def test_dotted_column_rejected(fixture_project):
 
 
 def test_generate_rejects_unsupported_check_type(fixture_project):
-    with pytest.raises(NotImplementedError, match="quality"):
-        generate(fixture_project.rules["gp_emp_quality"], ctx_for(fixture_project))
+    bogus = SimpleNamespace(check_type="bogus")  # pydantic would reject an unknown check_type literal
+    with pytest.raises(NotImplementedError, match="no SQL generator for check_type 'bogus'"):
+        generate(bogus, ctx_for(fixture_project))

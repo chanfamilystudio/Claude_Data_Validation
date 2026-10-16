@@ -8,11 +8,15 @@ from typing import Any
 from recon.config.models import Rule
 from recon.sqlgen.common import PARAM_HEADER, GenContext, GeneratedSql, params_for
 from recon.sqlgen.control_total import generate_control_total
+from recon.sqlgen.mapping import generate_mapping
+from recon.sqlgen.quality import generate_quality
 from recon.sqlgen.record_match import generate_record_match
 
 GENERATORS: dict[str, Callable[[Any, GenContext], GeneratedSql]] = {
     "record_match": generate_record_match,
     "control_total": generate_control_total,
+    "mapping": generate_mapping,
+    "quality": generate_quality,
 }
 
 
