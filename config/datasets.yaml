@@ -1,13 +1,86 @@
-# Logical sources -> connector. Datasets point at a source plus a table/view.
+# Logical sources -> connector.
 sources:
   workday: {connector: sqlserver}
   gp:      {connector: sqlserver}
 
-# Example dataset (uncomment and adapt):
-#   wd_workers:
-#     source: workday
-#     object: stg_wd.workers          # schema.table or view
-#     period_column: null             # null = snapshot (master data)
-#     filter: "SOURCDOC = 'UPRCC'"    # optional, trusted SQL
-#     freshness: {column: load_ts, max_age_hours: 26}   # optional
-datasets: {}
+# Datasets used by rules/. Object and column names follow the ASSUMED staging layout in
+# docs/ddl/assumed_staging.sql — change them here when the real staging DDL differs
+# (docs/production-rules.md lists every assumption).
+#
+#   period_column: null  -> master data, compared as a whole snapshot
+#   freshness            -> the check errors with "stale source" when MAX(column) is older
+#                           than max_age_hours (server local time); Workday extracts only,
+#                           GP straight copies carry no load timestamp.
+datasets:
+  # ---------------- Workday ----------------
+  wd_workers:
+    source: workday
+    object: stg_wd.workers
+    period_column: null
+    freshness: {column: load_ts, max_age_hours: 26}
+  wd_active_cost_centers:
+    source: workday
+    object: stg_wd.cost_centers
+    period_column: null
+    filter: "is_active = 1"
+    freshness: {column: load_ts, max_age_hours: 26}
+  wd_active_ledger_accounts:
+    source: workday
+    object: stg_wd.ledger_accounts
+    period_column: null
+    filter: "is_active = 1"
+    freshness: {column: load_ts, max_age_hours: 26}
+  wd_payroll_journal:
+    source: workday
+    object: stg_wd.payroll_journal
+    period_column: pay_date
+    freshness: {column: load_ts, max_age_hours: 26}
+  wd_suppliers:
+    source: workday
+    object: stg_wd.suppliers
+    period_column: null
+    freshness: {column: load_ts, max_age_hours: 26}
+  wd_supplier_invoices:
+    source: workday
+    object: stg_wd.supplier_invoices
+    period_column: invoice_date
+    freshness: {column: load_ts, max_age_hours: 26}
+
+  # ---------------- Great Plains ----------------
+  gp_employees:
+    source: gp
+    object: stg_gp.UPR00100
+    period_column: null
+  gp_departments:
+    source: gp
+    object: stg_gp.UPR40300
+    period_column: null
+  gp_job_titles:
+    source: gp
+    object: stg_gp.UPR40301
+    period_column: null
+  gp_payroll_gl:
+    source: gp
+    object: stg_gp.gl_detail
+    period_column: TRXDATE
+    filter: "SOURCDOC = 'UPRCC'"          # GP payroll postings; adjust if payroll posts under another source document
+  gp_natural_accounts:
+    source: gp
+    object: stg_gp.natural_accounts
+    period_column: null
+  gp_account_segments:
+    source: gp
+    object: stg_gp.GL00100
+    period_column: null
+  gp_account_strings:
+    source: gp
+    object: stg_gp.GL00105
+    period_column: null
+  gp_vendors:
+    source: gp
+    object: stg_gp.PM00200
+    period_column: null
+  gp_ap_invoices:
+    source: gp
+    object: stg_gp.ap_invoices
+    period_column: DOCDATE

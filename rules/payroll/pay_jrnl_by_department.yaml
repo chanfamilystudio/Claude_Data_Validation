@@ -1,0 +1,11 @@
+id: pay_jrnl_by_department
+domain: payroll
+check_type: control_total
+description: Workday payroll journal vs GP payroll GL postings, by department
+owner: payroll
+severity: high
+left: wd_payroll_journal
+right: gp_payroll_gl
+group_by: [{left: cost_center, right: department_segment, via_mapping: cc_to_dept}]
+measures:
+  - {name: net_amount, left: "SUM(debit - credit)", right: "SUM(DEBITAMT - CRDTAMNT)", tolerance: {abs: 0.01}}

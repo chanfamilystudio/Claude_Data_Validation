@@ -1,7 +1,24 @@
-# Example mapping (uncomment and adapt):
-#   cc_to_dept:
-#     object: xref.cost_center_map
-#     from: wd_cost_center
-#     to: gp_dept
-#     effective: {start: eff_start, end: eff_end}   # optional effective dating
-mappings: {}
+# Crosswalks used by rules/. Tables follow the ASSUMED layout in docs/ddl/assumed_staging.sql.
+# Every mapping is checked for ambiguity on each run: two valid rows for one `from` value is a rule error.
+mappings:
+  cc_to_dept:                       # Workday cost center -> GP department (effective-dated)
+    object: xref.cost_center_map
+    from: wd_cost_center
+    to: gp_dept
+    effective: {start: eff_start, end: eff_end}
+  job_profile_to_title:             # Workday job profile -> GP job title
+    object: xref.job_profile_map
+    from: wd_job_profile
+    to: gp_jobtitle
+  worker_status_to_inactive:        # Workday worker status -> GP INACTIVE flag (0/1)
+    object: xref.worker_status_map
+    from: wd_status
+    to: gp_inactive
+  ledger_to_natural_account:        # Workday ledger account -> GP natural account segment
+    object: xref.account_map
+    from: wd_ledger_account
+    to: gp_natural_account
+  supplier_status_to_vendstts:      # Workday supplier status -> GP VENDSTTS (1/2/3)
+    object: xref.supplier_status_map
+    from: wd_status
+    to: gp_vendstts

@@ -1,0 +1,13 @@
+id: gp_account_string_quality
+domain: gl
+check_type: quality
+description: GP account index (GL00105) hygiene
+owner: gl
+severity: low
+dataset: gp_account_strings
+key: [ACTINDX]
+assertions:
+  - not_null: [ACTNUMST]
+  - unique: [ACTINDX]
+  - unique: [ACTNUMST]
+  - references: {column: ACTINDX, dataset: gp_account_segments, ref_column: ACTINDX}

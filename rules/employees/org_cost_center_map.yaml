@@ -1,0 +1,10 @@
+id: org_cost_center_map
+domain: employees
+check_type: mapping
+description: Every active Workday cost center maps to an existing GP department
+owner: hris
+severity: medium
+dataset: wd_active_cost_centers
+column: cost_center_id
+mapping: cc_to_dept
+target: {dataset: gp_departments, column: DEPRTMNT}

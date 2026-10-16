@@ -1,0 +1,14 @@
+id: gp_employee_quality
+domain: employees
+check_type: quality
+description: GP employee master hygiene (no PII columns are asserted on)
+owner: hris
+severity: medium
+dataset: gp_employees
+key: [EMPLOYID]
+assertions:
+  - not_null: [EMPLOYID, LASTNAME, DEPRTMNT]
+  - unique: [EMPLOYID]
+  - accepted_values: {column: INACTIVE, values: [0, 1]}
+  - references: {column: DEPRTMNT, dataset: gp_departments, ref_column: DEPRTMNT}
+  - references: {column: JOBTITLE, dataset: gp_job_titles, ref_column: JOBTITLE}

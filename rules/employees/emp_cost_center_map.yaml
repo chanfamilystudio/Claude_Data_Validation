@@ -1,0 +1,10 @@
+id: emp_cost_center_map
+domain: employees
+check_type: mapping
+description: Every worker's Workday cost center maps to an existing GP department
+owner: hris
+severity: high
+dataset: wd_workers
+column: cost_center
+mapping: cc_to_dept
+target: {dataset: gp_departments, column: DEPRTMNT}

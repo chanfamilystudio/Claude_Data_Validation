@@ -1,0 +1,14 @@
+id: wd_pay_jrnl_quality
+domain: payroll
+check_type: quality
+description: Workday payroll journal extract hygiene for the period
+owner: payroll
+severity: medium
+dataset: wd_payroll_journal
+key: [journal_id, line_id]
+assertions:
+  - not_null: [journal_id, ledger_account, cost_center]
+  - unique: [journal_id, line_id]
+  - custom_sql:
+      name: unbalanced_journal
+      sql: "SELECT journal_id AS business_key FROM {dataset} GROUP BY journal_id HAVING SUM(debit) <> SUM(credit)"

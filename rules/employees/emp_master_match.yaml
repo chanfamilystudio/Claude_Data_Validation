@@ -1,0 +1,17 @@
+id: emp_master_match
+domain: employees
+check_type: record_match
+description: Workday workers vs GP employee master (UPR00100)
+owner: hris
+severity: high
+left: wd_workers
+right: gp_employees
+keys: [{left: employee_id, right: EMPLOYID}]
+compare:
+  - {left: legal_last_name,  right: LASTNAME}
+  - {left: legal_first_name, right: FRSTNAME}
+  - {left: cost_center,      right: DEPRTMNT, via_mapping: cc_to_dept}
+  - {left: job_profile,      right: JOBTITLE, via_mapping: job_profile_to_title}
+  - {left: hire_date,        right: STRTDATE, type: date}
+  - {left: worker_status,    right: INACTIVE, type: int, via_mapping: worker_status_to_inactive}
+  - {left: national_id,      right: SOCSCNUM, pii: true}

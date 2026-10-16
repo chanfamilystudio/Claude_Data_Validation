@@ -1,0 +1,17 @@
+id: vendor_master_match
+domain: ap
+check_type: record_match
+description: Workday suppliers vs GP vendor master (PM00200)
+owner: ap
+severity: high
+left: wd_suppliers
+right: gp_vendors
+keys: [{left: supplier_id, right: VENDORID}]
+compare:
+  - {left: supplier_name,   right: VENDNAME}
+  - {left: supplier_status, right: VENDSTTS, type: int, via_mapping: supplier_status_to_vendstts}
+  - {left: tax_id,          right: TXIDNMBR, pii: true}
+  - {left: city,            right: CITY}
+  - {left: state,           right: STATE}
+  - {left: postal_code,     right: ZIPCODE}
+  - {left: currency,        right: CURNCYID}

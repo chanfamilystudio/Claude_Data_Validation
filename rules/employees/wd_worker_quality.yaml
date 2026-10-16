@@ -1,0 +1,15 @@
+id: wd_worker_quality
+domain: employees
+check_type: quality
+description: Workday worker extract hygiene (no PII columns are asserted on)
+owner: hris
+severity: medium
+dataset: wd_workers
+key: [employee_id]
+assertions:
+  - not_null: [employee_id, legal_last_name, cost_center, hire_date, worker_status]
+  - unique: [employee_id]
+  - accepted_values: {column: worker_status, values: [Active, Terminated, Leave]}
+  - custom_sql:
+      name: future_hire_dates
+      sql: "SELECT employee_id AS business_key FROM {dataset} WHERE hire_date > CAST(GETDATE() AS DATE)"

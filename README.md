@@ -36,6 +36,9 @@ Requires Python 3.11+ and the Microsoft ODBC Driver 18 for SQL Server.
 
    Exit codes: `0` all checks passed, `1` breaks found, `2` error or refused command.
 
+The shipped rules in `rules/` are written against an assumed staging layout — see
+[`docs/production-rules.md`](docs/production-rules.md) for what they check and what to change for your real tables.
+
 See [`docs/operations.md`](docs/operations.md) for installation on Windows, database grants, scheduling, locks,
 sign-off evidence and local development, and [`docs/connectors.md`](docs/connectors.md) for adding a data source.
 Tests: `pytest -m "not integration"` needs nothing; `pytest -m integration` needs `RECON_TEST_DSN`

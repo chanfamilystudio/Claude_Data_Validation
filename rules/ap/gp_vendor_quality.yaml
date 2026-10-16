@@ -1,0 +1,12 @@
+id: gp_vendor_quality
+domain: ap
+check_type: quality
+description: GP vendor master hygiene (no PII columns are asserted on)
+owner: ap
+severity: medium
+dataset: gp_vendors
+key: [VENDORID]
+assertions:
+  - not_null: [VENDORID, VENDNAME]
+  - unique: [VENDORID]
+  - accepted_values: {column: VENDSTTS, values: [1, 2, 3]}

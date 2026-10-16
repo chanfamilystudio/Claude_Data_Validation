@@ -1,0 +1,10 @@
+id: pay_jrnl_account_map
+domain: payroll
+check_type: mapping
+description: Every ledger account used on the period's payroll journal maps to an active GP natural account
+owner: payroll
+severity: high
+dataset: wd_payroll_journal
+column: ledger_account
+mapping: ledger_to_natural_account
+target: {dataset: gp_natural_accounts, column: natural_account}

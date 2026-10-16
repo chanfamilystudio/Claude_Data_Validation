@@ -1,0 +1,12 @@
+id: ap_invoice_totals
+domain: ap
+check_type: control_total
+description: Workday supplier invoices vs GP payables invoices, totals by vendor for the period
+owner: ap
+severity: high
+left: wd_supplier_invoices
+right: gp_ap_invoices
+group_by: [{left: supplier_id, right: VENDORID}]
+measures:
+  - {name: invoice_amount, left: "SUM(invoice_amount)", right: "SUM(DOCAMNT)", tolerance: {abs: 0.01}}
+  - {name: invoice_count,  left: "COUNT(*)",            right: "COUNT(*)"}

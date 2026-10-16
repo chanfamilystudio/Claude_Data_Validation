@@ -1,0 +1,12 @@
+id: wd_invoice_quality
+domain: ap
+check_type: quality
+description: Workday supplier invoice extract hygiene for the period
+owner: ap
+severity: medium
+dataset: wd_supplier_invoices
+key: [supplier_id, invoice_number]
+assertions:
+  - not_null: [supplier_id, invoice_number, invoice_amount]
+  - unique: [supplier_id, invoice_number]
+  - references: {column: supplier_id, dataset: wd_suppliers, ref_column: supplier_id}

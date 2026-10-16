@@ -1,0 +1,13 @@
+id: gp_account_segment_quality
+domain: gl
+check_type: quality
+description: GP account master (GL00100) hygiene
+owner: gl
+severity: medium
+dataset: gp_account_segments
+key: [ACTINDX]
+assertions:
+  - not_null: [ACTNUMBR_1, ACTNUMBR_2]
+  - unique: [ACTINDX]
+  - unique: [ACTNUMBR_1, ACTNUMBR_2, ACTNUMBR_3]
+  - accepted_values: {column: ACTIVE, values: [0, 1]}

@@ -1,0 +1,10 @@
+id: gl_account_map
+domain: gl
+check_type: mapping
+description: Every active Workday ledger account maps to an active GP natural account
+owner: gl
+severity: high
+dataset: wd_active_ledger_accounts
+column: ledger_account
+mapping: ledger_to_natural_account
+target: {dataset: gp_natural_accounts, column: natural_account}

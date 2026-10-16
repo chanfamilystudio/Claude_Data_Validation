@@ -1,0 +1,14 @@
+id: ap_invoice_match
+domain: ap
+check_type: record_match
+description: Workday supplier invoices vs GP payables invoices (open + history), by invoice date in the period
+owner: ap
+severity: high
+left: wd_supplier_invoices
+right: gp_ap_invoices
+keys:
+  - {left: supplier_id,    right: VENDORID}
+  - {left: invoice_number, right: DOCNUMBR}
+compare:
+  - {left: invoice_amount, right: DOCAMNT, type: decimal, tolerance: {abs: 0.01}}
+  - {left: invoice_date,   right: DOCDATE, type: date}

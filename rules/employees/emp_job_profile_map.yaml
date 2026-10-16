@@ -1,0 +1,10 @@
+id: emp_job_profile_map
+domain: employees
+check_type: mapping
+description: Every worker's Workday job profile maps to an existing GP job title
+owner: hris
+severity: medium
+dataset: wd_workers
+column: job_profile
+mapping: job_profile_to_title
+target: {dataset: gp_job_titles, column: JOBTITLE}

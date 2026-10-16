@@ -1,0 +1,13 @@
+id: pay_jrnl_by_account
+domain: payroll
+check_type: control_total
+description: Workday payroll journal vs GP payroll GL postings, by natural account
+owner: payroll
+severity: high
+left: wd_payroll_journal
+right: gp_payroll_gl
+group_by: [{left: ledger_account, right: natural_account, via_mapping: ledger_to_natural_account}]
+measures:
+  - {name: net_amount,   left: "SUM(debit - credit)", right: "SUM(DEBITAMT - CRDTAMNT)", tolerance: {abs: 0.01}}
+  - {name: debit_total,  left: "SUM(debit)",          right: "SUM(DEBITAMT)",            tolerance: {abs: 0.01}}
+  - {name: credit_total, left: "SUM(credit)",         right: "SUM(CRDTAMNT)",            tolerance: {abs: 0.01}}
