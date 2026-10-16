@@ -94,6 +94,10 @@ class Database:
                     if cur.description is not None:
                         cols = [c[0] for c in cur.description]
                         rows = [dict(zip(cols, r, strict=True)) for r in cur.fetchall()]
+                # pyodbc defers errors from later statements of a batch until nextset();
+                # drain everything so they raise here (and trigger the rollback below).
+                while cur.nextset():
+                    pass
                 return rows, rowcount
             finally:
                 cur.close()
@@ -150,8 +154,10 @@ class Database:
             " @LockOwner = 'Session', @LockTimeout = 0; SELECT @r;",
             resource,
         )
-        if result is None or result < 0:
+        if result == -1:  # timeout: someone else holds it
             raise LockBusy(resource)
+        if result is None or result < 0:
+            raise RuntimeError(f"sp_getapplock failed for {resource!r} with code {result}")
         try:
             yield
         finally:

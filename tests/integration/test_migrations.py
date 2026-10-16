@@ -89,6 +89,25 @@ def db_dsn(db):
     return db.conn_str
 
 
+def test_deferred_error_in_second_statement_is_raised_and_not_committed(db):
+    db.execute("CREATE TABLE recon.multi_probe (n INT)")
+    try:
+        sql = "INSERT INTO recon.multi_probe VALUES (1); INSERT INTO recon.multi_probe VALUES ('x');"
+        with pytest.raises(pyodbc.Error):
+            db.execute(sql)
+        assert db.scalar("SELECT COUNT(*) FROM recon.multi_probe") == 0
+        with pytest.raises(pyodbc.Error):
+            db.query(sql + " SELECT 1 AS a")
+        assert db.scalar("SELECT COUNT(*) FROM recon.multi_probe") == 0
+        with pytest.raises(pyodbc.Error), db.transaction():
+            db.execute(sql)
+        assert db.scalar("SELECT COUNT(*) FROM recon.multi_probe") == 0
+        # a healthy multi-statement batch still works; query returns the first result set
+        assert db.query("INSERT INTO recon.multi_probe VALUES (7); SELECT n FROM recon.multi_probe;") == [{"n": 7}]
+    finally:
+        db.execute("DROP TABLE recon.multi_probe")
+
+
 def test_query_params_and_scalar(db):
     assert db.query("SELECT ? AS a, ? AS b", 1, "x") == [{"a": 1, "b": "x"}]
     assert db.scalar("SELECT ?", 41) == 41
@@ -230,3 +249,9 @@ def test_timestamps_default_to_utc(db):
 def test_migration_files_are_named_in_sequence():
     names = [v for v, _ in list_migrations(None)]
     assert names[0] == "V001" and all(re.fullmatch(r"V\d{3}", n) for n in names)
+
+
+def test_recon_tables_start_empty_for_each_test(db):
+    for table in ("[rule]", "run", "run_check", "total_result", "[break]", "break_occurrence", "break_comment",
+                  "audit_log", "import_batch", "signoff"):
+        assert db.scalar(f"SELECT COUNT(*) FROM recon.{table}") == 0, table

@@ -73,6 +73,7 @@ class FakeCursor:
         self.conn.log.append(("execute", sql, params))
         if sql.startswith("BOOM"):
             raise RuntimeError("boom")
+        self.pending_sets = 1 if sql.startswith("DEFER") else 0
         if sql.startswith("SELECT"):
             self.description = [("a",), ("b",)]
             self._rows = [(1, "x"), (2, "y")]
@@ -84,6 +85,10 @@ class FakeCursor:
         return self._rows
 
     def nextset(self):
+        self.conn.log.append("nextset")
+        if self.pending_sets:
+            self.pending_sets -= 1
+            raise RuntimeError("deferred error in later statement")
         return False
 
     def close(self):
@@ -151,6 +156,27 @@ def test_transaction_rolls_back_on_error(fake_db):
     assert conn.log[-1] == "commit"
 
 
+@pytest.mark.parametrize("method", ["execute", "query", "scalar"])
+def test_deferred_error_in_later_statement_rolls_back(fake_db, method):
+    db, conn = fake_db
+    with pytest.raises(RuntimeError, match="deferred"):
+        getattr(db, method)("DEFER; SELECT 1")
+    assert "commit" not in conn.log and conn.log[-1] == "rollback"
+
+
+def test_deferred_error_inside_transaction_propagates_and_rolls_back(fake_db):
+    db, conn = fake_db
+    with pytest.raises(RuntimeError, match="deferred"), db.transaction():
+        db.execute("DEFER")
+    assert "commit" not in conn.log and conn.log.count("rollback") == 1
+
+
+def test_query_drains_result_sets(fake_db):
+    db, conn = fake_db
+    assert db.query("SELECT 1") == [{"a": 1, "b": "x"}, {"a": 2, "b": "y"}]
+    assert "nextset" in conn.log
+
+
 def test_nested_transaction_is_an_error(fake_db):
     db, _ = fake_db
     with db.transaction(), pytest.raises(RuntimeError, match="nested"), db.transaction():
@@ -168,6 +194,21 @@ def test_set_timeout(fake_db):
     db, conn = fake_db
     db.set_timeout(7)
     assert conn.timeout == 7
+
+
+@pytest.mark.parametrize("code", [-2, -3, -999])
+def test_applock_other_negative_codes_are_runtime_errors(fake_db, monkeypatch, code):
+    db, _ = fake_db
+    monkeypatch.setattr(db, "scalar", lambda *a, **k: code)
+    with pytest.raises(RuntimeError, match=str(code)), db.applock("r"):
+        pass
+
+
+def test_applock_timeout_code_is_lockbusy(fake_db, monkeypatch):
+    db, _ = fake_db
+    monkeypatch.setattr(db, "scalar", lambda *a, **k: -1)
+    with pytest.raises(LockBusy), db.applock("r"):
+        pass
 
 
 def test_lockbusy_carries_resource():

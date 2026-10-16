@@ -54,3 +54,20 @@ def db(dsn):
         yield database
     finally:
         database.close()
+
+
+# FK-safe order: children before parents. schema_version is deliberately kept.
+_CLEAN_ORDER = (
+    "audit_log", "break_comment", "break_occurrence", "total_result", "run_check",
+    "signoff", "[break]", "import_batch", "run", "[rule]",
+)
+
+
+@pytest.fixture(autouse=True)
+def clean_recon_tables(request):
+    """Leave the shared session database with empty recon tables after every test."""
+    database = request.getfixturevalue("db")
+    yield
+    with database.transaction():
+        for table in _CLEAN_ORDER:
+            database.execute(f"DELETE FROM recon.{table}")
