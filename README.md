@@ -1,6 +1,6 @@
 # Claude Data Validation
 
-Metadata-driven reconciliation framework for Workday ↔ Great Plains (and, later, other sources), backed by SQL Server. Design spec: `docs/superpowers/specs/` (in progress).
+Metadata-driven reconciliation framework for Workday ↔ Great Plains (and, later, other sources), backed by SQL Server. Design spec: [`docs/superpowers/specs/2026-10-15-workday-gp-reconciliation-design.md`](docs/superpowers/specs/2026-10-15-workday-gp-reconciliation-design.md).
 
 ## Claude Code mods
 
