@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable
-from datetime import date
+from datetime import UTC, date, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Annotated
@@ -13,7 +13,7 @@ from typing import Annotated
 import pyodbc
 import typer
 
-from recon.config.loader import ConfigError, load_project
+from recon.config.loader import ConfigError, Project, load_project
 from recon.db import Database, LockBusy, connection_string
 from recon.excel.export import export_path, export_workbook
 from recon.excel.importer import WorkbookError, import_workbook
@@ -22,12 +22,15 @@ from recon.logging_setup import configure_logging
 from recon.migrations import apply_migrations
 from recon.periods import SNAPSHOT, resolve_period
 from recon.repository import Repository, SqlRepository
+from recon.signoff import SignoffRefused, revoke, sign_off
 
 app = typer.Typer(no_args_is_help=True, help="Workday to Great Plains reconciliation engine.")
 rules_app = typer.Typer(no_args_is_help=True, help="Work with reconciliation rules.")
 app.add_typer(rules_app, name="rules")
 db_app = typer.Typer(no_args_is_help=True, help="Database maintenance.")
 app.add_typer(db_app, name="db")
+signoff_app = typer.Typer(invoke_without_command=True, help="Sign off a reviewed period, or revoke a sign-off.")
+app.add_typer(signoff_app, name="signoff")
 
 
 @rules_app.command("validate")
@@ -260,3 +263,89 @@ def import_(
     if result.rejects_path is not None:
         typer.echo(f"rejects: {result.rejects_path}")
     raise typer.Exit(1 if result.rejected else 0)
+
+
+def _signoff_context(domain: str, period: str, root: Path) -> tuple[Project, str, Database]:
+    """Shared validation for ``signoff`` / ``signoff revoke``: (project, period label, open database)."""
+    if period.strip().upper() == SNAPSHOT:
+        typer.echo("--period must be YYYY-MM, current or previous (sign-off covers a calendar period)")
+        raise typer.Exit(2)
+    try:
+        label = resolve_period(period, date.today()).label
+    except ValueError as exc:
+        typer.echo(f"invalid period {period!r}: expected YYYY-MM, current or previous")
+        raise typer.Exit(2) from exc
+    try:
+        project = load_project(root)
+        conn_str = connection_string(root, os.environ)
+    except ConfigError as exc:
+        for issue in exc.issues:
+            typer.echo(issue)
+        raise typer.Exit(2) from exc
+    if domain not in {r.domain for r in project.rules.values()}:
+        typer.echo(f"unknown domain {domain!r}")
+        raise typer.Exit(2)
+    try:
+        database = Database(conn_str)
+    except pyodbc.Error as exc:
+        typer.echo(f"Cannot connect to the database: {exc}")
+        raise typer.Exit(2) from exc
+    return project, label, database
+
+
+@signoff_app.callback()
+def signoff_command(
+    ctx: typer.Context,
+    domain: Annotated[str | None, typer.Option("--domain", help="Domain to sign off.")] = None,
+    period: Annotated[str | None, typer.Option("--period", help="YYYY-MM, current or previous.")] = None,
+    comment: Annotated[str | None, typer.Option("--comment", help="Sign-off comment.")] = None,
+    root: Annotated[Path, typer.Option("--root", help="Project root containing config/ and rules/.")] = Path("."),
+) -> None:
+    """Sign off a domain and period: freeze an evidence workbook and record the approval."""
+    if ctx.invoked_subcommand is not None:
+        return
+    missing = [name for name, value in (("--domain", domain), ("--period", period), ("--comment", comment))
+               if value is None]
+    if missing:
+        typer.echo(f"Missing option(s): {', '.join(missing)}")
+        raise typer.Exit(2)
+    assert domain is not None and period is not None and comment is not None
+    project, label, database = _signoff_context(domain, period, root)
+    try:
+        try:
+            row = sign_off(project, SqlRepository(database), domain=domain, period_label=label,
+                           comment=comment, now=datetime.now(UTC))
+        except SignoffRefused as exc:
+            for reason in exc.reasons:
+                typer.echo(reason)
+            raise typer.Exit(2) from exc
+        except Exception as exc:
+            typer.echo(f"Sign-off failed: {exc}")
+            raise typer.Exit(2) from exc
+    finally:
+        database.close()
+    typer.echo(f"Signed off {domain} {label} (sign-off {row.signoff_id}): {row.evidence_path}")
+
+
+@signoff_app.command("revoke")
+def signoff_revoke(
+    domain: Annotated[str, typer.Option("--domain", help="Domain to revoke.")],
+    period: Annotated[str, typer.Option("--period", help="YYYY-MM, current or previous.")],
+    reason: Annotated[str, typer.Option("--reason", help="Why the sign-off is revoked.")],
+    root: Annotated[Path, typer.Option("--root", help="Project root containing config/ and rules/.")] = Path("."),
+) -> None:
+    """Revoke the active sign-off of a domain and period."""
+    project, label, database = _signoff_context(domain, period, root)
+    try:
+        try:
+            revoke(project, SqlRepository(database), domain=domain, period_label=label, reason=reason)
+        except SignoffRefused as exc:
+            for text in exc.reasons:
+                typer.echo(text)
+            raise typer.Exit(2) from exc
+        except Exception as exc:
+            typer.echo(f"Revoke failed: {exc}")
+            raise typer.Exit(2) from exc
+    finally:
+        database.close()
+    typer.echo(f"Revoked {domain} {label}")
