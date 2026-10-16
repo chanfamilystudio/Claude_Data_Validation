@@ -98,8 +98,18 @@ def test_tolerance_pct_and_abs_forms(fixture_project):
     totals = generate(_rule(), ctx_for(fixture_project)).totals_sql
     assert "0.01 * ABS(v.right_value)" in totals
     assert "CASE WHEN 0.5 >= 0.02 * ABS(v.right_value)" in totals
-    whens = [line.strip() for line in totals.splitlines() if line.strip().startswith("WHEN N'")]
+    whens = [line.strip() for line in totals.splitlines() if line.strip().startswith("WHEN ")]
     assert len(whens) == 2 and not any(w.endswith(",") for w in whens)
+
+
+def test_tolerance_case_is_keyed_on_ordinal_not_name(fixture_project):
+    totals = generate(_rule(), ctx_for(fixture_project)).totals_sql
+    assert "CASE v.ord" in totals and "CASE v.measure" not in totals
+    assert "WHEN 1 THEN 0.01 * ABS(v.right_value)" in totals
+    assert "WHEN 2 THEN CASE WHEN 0.5" in totals
+    assert "(1, N'net', COALESCE(l.m1, 0), COALESCE(r.m1, 0))" in totals
+    assert "AS v (ord, measure, left_value, right_value)" in totals
+    assert "WHEN N'" not in totals
 
 
 def test_counts_sql(fixture_project):
@@ -118,3 +128,14 @@ def test_dotted_group_column_rejected(fixture_project):
     rule = _rule(group_by=[{"left": "a.b", "right": "A"}])
     with pytest.raises(ValueError, match="column"):
         generate(rule, ctx_for(fixture_project))
+
+
+def test_duplicate_measure_names_rejected_ignoring_case():
+    measures = [
+        {"name": "Net", "left": "SUM(a)", "right": "SUM(b)"},
+        {"name": "net", "left": "SUM(c)", "right": "SUM(d)", "tolerance": {"abs": 1}},
+    ]
+    with pytest.raises(ValueError, match="duplicate measure"):
+        _rule(measures=measures)
+    with pytest.raises(ValueError, match="duplicate measure"):
+        _rule(measures=[measures[0], dict(measures[0])])

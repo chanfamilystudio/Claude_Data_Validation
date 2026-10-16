@@ -304,6 +304,18 @@ class ControlTotalRule(_BaseRule):
     group_by: list[GroupBy] = Field(default_factory=list)
     measures: list[Measure] = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def _unique_measure_names(self) -> ControlTotalRule:
+        # the measure name is the break's field_name (part of break_key); SQL Server compares it
+        # case-insensitively under the usual collations, so case-only differences are duplicates too
+        seen: dict[str, str] = {}
+        for m in self.measures:
+            folded = m.name.lower()
+            if folded in seen:
+                raise ValueError(f"duplicate measure name {m.name!r} (same as {seen[folded]!r}, ignoring case)")
+            seen[folded] = m.name
+        return self
+
     def dataset_refs(self) -> list[tuple[str, str]]:
         return [("left", self.left), ("right", self.right)]
 

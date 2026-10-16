@@ -203,3 +203,16 @@ def test_tolerance_on_date_field_is_a_loader_issue(tmp_fixture):
     issue = e.value.issues[0]
     assert issue.startswith("rules/employees/emp_master_match.yaml: compare.1: ")
     assert "tolerance requires type decimal or int (field 'hire_date' is date)" in issue
+
+
+def test_duplicate_measure_names_are_a_loader_issue(tmp_fixture):
+    measures = [
+        {"name": "net_amount", "left": "SUM(a)", "right": "SUM(b)"},
+        {"name": "NET_AMOUNT", "left": "COUNT(*)", "right": "COUNT(*)"},
+    ]
+    edit_rule(tmp_fixture, "payroll/pay_jrnl_totals.yaml", {"measures": measures})
+    with pytest.raises(ConfigError) as e:
+        load_project(tmp_fixture)
+    assert len(e.value.issues) == 1
+    assert e.value.issues[0].startswith("rules/payroll/pay_jrnl_totals.yaml: ")
+    assert "duplicate measure name 'NET_AMOUNT'" in e.value.issues[0]

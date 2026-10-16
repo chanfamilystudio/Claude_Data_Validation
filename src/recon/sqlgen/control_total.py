@@ -86,15 +86,16 @@ def _totals_sql(rule: ControlTotalRule, ctx: GenContext, groups: list[_Group]) -
     left = _side_sql(rule, ctx.sources[rule.left], groups, "left")
     right = _side_sql(rule, ctx.sources[rule.right], groups, "right")
     values = ",\n".join(
-        f"(N'{m.name}', COALESCE(l.m{i}, 0), COALESCE(r.m{i}, 0))" for i, m in enumerate(rule.measures, start=1)
+        f"({i}, N'{m.name}', COALESCE(l.m{i}, 0), COALESCE(r.m{i}, 0))" for i, m in enumerate(rule.measures, start=1)
     )
     tolerance = "\n".join(
-        # one WHEN per measure with a tolerance; every other measure is exact (tolerance 0)
-        f"WHEN N'{m.name}' THEN {tol}"
-        for m in rule.measures
+        # one WHEN per measure with a tolerance, keyed on the measure's ordinal (never its name, which
+        # a case-insensitive collation could confuse); every other measure is exact (tolerance 0)
+        f"WHEN {i} THEN {tol}"
+        for i, m in enumerate(rule.measures, start=1)
         if (tol := tolerance_sql(m.tolerance, "v.right_value")) is not None
     )
-    tolerance_expr = f"CASE v.measure\n{sub(tolerance)}\n{TAB}ELSE 0\nEND" if tolerance else "0"
+    tolerance_expr = f"CASE v.ord\n{sub(tolerance)}\n{TAB}ELSE 0\nEND" if tolerance else "0"
     paired = (
         "SELECT\n"
         + block(
@@ -110,7 +111,7 @@ def _totals_sql(rule: ControlTotalRule, ctx: GenContext, groups: list[_Group]) -
         + "\nFROM (\n" + sub(left) + "\n) AS l"
         + "\nFULL OUTER JOIN (\n" + sub(right) + "\n) AS r"
         + f"\n{TAB}ON r.group_key = l.group_key"
-        + "\nCROSS APPLY (VALUES\n" + sub(values) + "\n) AS v (measure, left_value, right_value)"
+        + "\nCROSS APPLY (VALUES\n" + sub(values) + "\n) AS v (ord, measure, left_value, right_value)"
     )
     return (
         "SELECT\n"

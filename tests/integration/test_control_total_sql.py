@@ -313,6 +313,27 @@ def test_pct_and_combined_tolerance_executed_on_server(pct_tables):
     assert {(d[0], d[2]) for d in diffs} == {k for k, v in got.items() if not v[2]}
 
 
+def test_each_measure_gets_its_own_tolerance(pct_tables):
+    """Tolerances are keyed per measure (not by name lookup): 'net' is loose, 'gross' is exact."""
+    db = pct_tables
+    rule = _rule(
+        left="wd",
+        right="gp",
+        group_by=[{"left": "acct", "right": "ACCT"}],
+        measures=[
+            {"name": "net", "left": "SUM(amt)", "right": "SUM(AMT)", "tolerance": {"abs": 50}},
+            {"name": "gross", "left": "SUM(amt)", "right": "SUM(AMT)"},
+            {"name": "other", "left": "SUM(amt)", "right": "SUM(AMT)", "tolerance": {"pct": "0.5"}},
+        ],
+    )
+    totals, diffs = _load(db, generate(rule, _ctx(_ds("wd", "t_ct_wd.pct"), _ds("gp", "t_ct_gp.pct"))), SNAPSHOT_PARAMS)
+    for acct in ("P1", "P2", "P3", "P4", "P5"):
+        assert totals[(acct, "net")][3:] == (_d("50"), True)
+        assert totals[(acct, "gross")][3:] == (_d("0"), False)
+        assert totals[(acct, "other")][3] == _d("500") and totals[(acct, "other")][4] is True
+    assert {d[2] for d in diffs} == {"gross"} and len(diffs) == 5
+
+
 def test_pct_tolerance_boundary_is_inclusive(pct_tables):
     db = pct_tables
     db.execute("UPDATE t_ct_wd.pct SET amt = 1010 WHERE acct = 'P2'")  # exactly 1% of 1000

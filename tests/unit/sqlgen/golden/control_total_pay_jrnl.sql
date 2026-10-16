@@ -34,8 +34,8 @@ FROM (
         v.left_value,
         v.right_value,
         v.left_value - v.right_value AS diff,
-        CASE v.measure
-            WHEN N'net_amount' THEN 0.01
+        CASE v.ord
+            WHEN 1 THEN 0.01
             ELSE 0
         END AS tolerance_applied
     FROM (
@@ -68,9 +68,9 @@ FROM (
     ) AS r
         ON r.group_key = l.group_key
     CROSS APPLY (VALUES
-        (N'net_amount', COALESCE(l.m1, 0), COALESCE(r.m1, 0)),
-        (N'line_count', COALESCE(l.m2, 0), COALESCE(r.m2, 0))
-    ) AS v (measure, left_value, right_value)
+        (1, N'net_amount', COALESCE(l.m1, 0), COALESCE(r.m1, 0)),
+        (2, N'line_count', COALESCE(l.m2, 0), COALESCE(r.m2, 0))
+    ) AS v (ord, measure, left_value, right_value)
 ) AS w
 GO
 DECLARE @period_start DATE = ?, @period_end_excl DATE = ?, @as_of DATE = ?;
