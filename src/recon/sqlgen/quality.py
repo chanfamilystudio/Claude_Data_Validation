@@ -88,6 +88,13 @@ class _Builder:
     def _value(self, column: str) -> str:
         return norm_string(column_ref("s", column), _NORMALIZE)
 
+    def _shown(self, column: str) -> str:
+        """The value displayed as left_value: the raw text, or ``***`` for a dataset pii column."""
+        ds = self.ctx.datasets.get(self.rule.dataset)
+        if ds is not None and ds.is_pii(column):
+            return _nlit("***")
+        return text_of(column_ref("s", column))
+
     def not_null(self, a: NotNull) -> str:
         values = ",\n".join(f"({_nlit('not_null:' + c)}, {self._value(c)})" for c in a.columns)
         body = (
@@ -129,8 +136,7 @@ class _Builder:
             f"{TAB}{TAB}WHERE a.value = {value}\n"
             f"{TAB})"
         )
-        return _branch(self.key, _nlit("accepted_values:" + a.column), text_of(column_ref("s", a.column)), _NULL,
-                       body)
+        return _branch(self.key, _nlit("accepted_values:" + a.column), self._shown(a.column), _NULL, body)
 
     def references(self, a: References) -> str:
         ref_source = source_for(self.ctx, a.dataset)
@@ -143,7 +149,7 @@ class _Builder:
             f"{TAB}{TAB}SELECT 1 FROM {ref_source} AS r WHERE {ref_value} = {value}\n"
             f"{TAB})"
         )
-        return _branch(self.key, _nlit("references:" + a.column), text_of(column_ref("s", a.column)), _NULL, body)
+        return _branch(self.key, _nlit("references:" + a.column), self._shown(a.column), _NULL, body)
 
     def like(self, a: Like) -> str:
         raw = text_of(column_ref("s", a.column))
@@ -153,7 +159,7 @@ class _Builder:
             f"WHERE {self._value(a.column)} IS NOT NULL\n"
             f"{TAB}AND {trimmed} NOT LIKE {_nlit(a.pattern)} COLLATE {COMPARE_COLLATION}"
         )
-        return _branch(self.key, _nlit("like:" + a.column), raw, _NULL, body)
+        return _branch(self.key, _nlit("like:" + a.column), self._shown(a.column), _NULL, body)
 
     def custom_sql(self, a: CustomSql) -> str:
         sql = _DATASET_PLACEHOLDER.sub(

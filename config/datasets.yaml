@@ -8,6 +8,9 @@ sources:
 # (docs/production-rules.md lists every assumption).
 #
 #   period_column: null  -> master data, compared as a whole snapshot
+#   pii_columns          -> values shown as *** in every check, stored and exported; record_match
+#                           compares them by hash; the loader refuses them as keys, groups,
+#                           mapping subjects and unique columns. Never select them in custom_sql.
 #   freshness            -> the check errors with "stale source" when MAX(column) is older
 #                           than max_age_hours (server local time); Workday extracts only,
 #                           GP straight copies carry no load timestamp.
@@ -17,6 +20,7 @@ datasets:
     source: workday
     object: stg_wd.workers
     period_column: null
+    pii_columns: [national_id]
     freshness: {column: load_ts, max_age_hours: 26}
   wd_active_cost_centers:
     source: workday
@@ -39,6 +43,7 @@ datasets:
     source: workday
     object: stg_wd.suppliers
     period_column: null
+    pii_columns: [tax_id]
     freshness: {column: load_ts, max_age_hours: 26}
   wd_supplier_invoices:
     source: workday
@@ -51,6 +56,7 @@ datasets:
     source: gp
     object: stg_gp.UPR00100
     period_column: null
+    pii_columns: [SOCSCNUM]
   gp_departments:
     source: gp
     object: stg_gp.UPR40300
@@ -80,6 +86,7 @@ datasets:
     source: gp
     object: stg_gp.PM00200
     period_column: null
+    pii_columns: [TXIDNMBR]
   gp_ap_invoices:
     source: gp
     object: stg_gp.ap_invoices

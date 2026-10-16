@@ -12,6 +12,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError, field_validator
 
 from recon.config.models import DatasetConfig, MappingConfig, Rule, SourceConfig
+from recon.config.pii import pii_issues
 
 _RULE_ADAPTER: TypeAdapter[Rule] = TypeAdapter(Rule)
 
@@ -201,6 +202,8 @@ def load_project(root: Path) -> Project:
             problems += [
                 f"{loc}: unknown dataset {name!r}" for loc, name in rule.dataset_refs() if name not in datasets
             ]
+        if check_datasets:
+            problems += pii_issues(rule, datasets)
         if check_mappings:
             problems += [
                 f"{loc}: unknown mapping {name!r}" for loc, name in rule.mapping_refs() if name not in mappings

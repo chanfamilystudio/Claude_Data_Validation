@@ -147,7 +147,7 @@ Created and upgraded by versioned migration scripts in `sql/migrations/`, tracke
 - **Left = Workday, right = GP** by convention in shipped rules (the engine itself is side-agnostic).
 - **Periods:** `period_label` (e.g. `2026-09`) + inclusive `period_start`/`period_end` dates. Master-data (non-periodic) checks use `period_label = 'SNAPSHOT'`.
 - **Identity:** `run_by`, `changed_by`, `signed_by`, `imported_by`, `author` = `SUSER_SNAME()` of the connection.
-- **PII:** for compare fields marked `pii: true`, comparison uses `HASHBYTES('SHA2_256', normalized_value)`; `left_value`/`right_value` are stored as `***`. Raw PII is never written to `recon.*`. PII columns may not be used in `business_key` (validation error).
+- **PII:** columns listed in a dataset's `pii_columns` (and compare fields marked `pii: true`) are masked in every check type: comparison uses `HASHBYTES('SHA2_256', normalized_value)`; `left_value`/`right_value` are stored as `***`. Raw PII is never written to `recon.*`. PII columns may not be used where they become `business_key` — record_match keys, control_total groups, mapping columns, quality keys and unique columns (validation error). `custom_sql` cannot be inspected and must not return a PII column.
 - **break_key:** SHA-256 over `rule_id | period_label | business_key | field_name | break_type`. Excludes rule version, so tightening/loosening a rule cleanly clears breaks.
 
 ### 3.3 Database roles

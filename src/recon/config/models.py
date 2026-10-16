@@ -54,6 +54,10 @@ class DatasetConfig(_Model):
     period_column: Identifier | None = None
     filter: str | None = None
     freshness: Freshness | None = None
+    pii_columns: list[Identifier] = []      # values masked as *** everywhere; never usable as keys
+
+    def is_pii(self, column: str) -> bool:
+        return column.lower() in {c.lower() for c in self.pii_columns}
 
 
 class Effective(_Model):

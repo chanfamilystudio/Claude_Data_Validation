@@ -182,6 +182,9 @@ def _fields(rule: RecordMatchRule, ctx: GenContext) -> list[_Field]:
             if cfg.via_mapping not in ctx.mappings:
                 raise ValueError(f"rule {rule.id}: unknown mapping {cfg.via_mapping!r}")
             mapping = ctx.mappings[cfg.via_mapping]
+        left_ds, right_ds = ctx.datasets.get(rule.left), ctx.datasets.get(rule.right)
+        if not cfg.pii and ((left_ds and left_ds.is_pii(cfg.left)) or (right_ds and right_ds.is_pii(cfg.right))):
+            cfg = cfg.model_copy(update={"pii": True})   # dataset pii_columns: hash compare, *** shown
         fields.append(_Field(i, cfg, mapping))
     return fields
 

@@ -67,6 +67,11 @@ Employees, GL account and vendor checks are snapshot (master data). Payroll and 
   - `worker_status_map`: Active/Leave → 0, Terminated → 1.
   - `supplier_status_map`: Active → 1, Inactive → 2, On Hold → 3.
 
+**Sensitive columns**
+- `pii_columns` in `config/datasets.yaml` marks `national_id` / `SOCSCNUM` (national ID / SSN) and `tax_id` /
+  `TXIDNMBR` (vendor tax ID). They are compared by hash and shown only as `***`. Add any other sensitive column you
+  stage (bank account, birth date) to the same lists before writing rules on it.
+
 **Tolerances**
 - All money comparisons allow ±0.01. Counts, dates and text are exact.
 - Text comparison ignores case and surrounding spaces. That covers GP's upper-case, fixed-width `CHAR` columns.

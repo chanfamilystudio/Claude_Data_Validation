@@ -123,3 +123,13 @@ def test_shipped_rules_find_exactly_the_planted_breaks(prod_db, project_root, mo
     pii = database.query(
         "SELECT left_value, right_value FROM recon.[break] WHERE field_name = 'national_id'")
     assert pii == [{"left_value": "***", "right_value": "***"}]
+
+    # No raw identity number from the sample (national IDs, SSNs, tax IDs) is stored anywhere.
+    stored = database.query(
+        "SELECT left_value AS v FROM recon.[break] UNION ALL SELECT right_value FROM recon.[break] "
+        "UNION ALL SELECT left_value FROM recon.break_occurrence UNION ALL SELECT right_value FROM recon.break_occurrence "
+        "UNION ALL SELECT business_key FROM recon.[break]")
+    values = {r["v"] for r in stored if r["v"] is not None}
+    raw_ids = {"111-11-1111", "222-22-2222", "333-33-3333", "444-44-4444", "555-55-5555", "666-66-6666",
+               "777-77-7777", "777-77-7770", "888-88-8888", "12-3456789", "98-7654321", "55-5555555", "44-4444444"}
+    assert not {v.strip() for v in values} & raw_ids
