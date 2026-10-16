@@ -59,3 +59,17 @@ def test_human_path_methods_own_their_transaction(db):
     rec = create_break(repo, open_run(repo))
     with db.transaction(), pytest.raises(RuntimeError, match="nested transaction"):
         repo.apply_user_edits([edit(rec.break_id, owner="bob")], "a.xlsx", "1" * 64, 0)
+
+
+def test_duplicate_active_signoff_is_an_integrity_error_naming_the_index(db):
+    # recon.signoff.sign_off deletes its evidence file only for this exact refusal
+    from recon.signoff import _definitely_refused
+    from repository_contract import add_rule, open_run, signoff_row
+
+    repo = SqlRepository(db)
+    add_rule(repo)
+    run_id = open_run(repo)
+    repo.insert_signoff(signoff_row(run_id))
+    with pytest.raises(pyodbc.IntegrityError, match="UX_signoff_one_signed") as exc:
+        repo.insert_signoff(signoff_row(run_id))
+    assert _definitely_refused(exc.value)

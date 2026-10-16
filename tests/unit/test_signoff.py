@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import ClassVar
 
+import pyodbc
 import pytest
 from typer.testing import CliRunner
 
@@ -17,7 +18,7 @@ from recon.cli import app
 from recon.config.loader import load_project
 from recon.db import LockBusy
 from recon.model import CheckRecord
-from recon.signoff import SignoffRefused, revoke, sign_off
+from recon.signoff import SignoffOutcomeUnknown, SignoffRefused, revoke, sign_off
 from repository_contract import HASH_A, add_rule, create_break, edit, observed, open_run
 
 P = "2026-09"
@@ -239,16 +240,65 @@ def test_breaks_created_after_sign_off_are_flagged_post_signoff(project, repo):
     assert late.post_signoff is True
 
 
-def test_insert_failure_deletes_the_evidence_file(project, repo, monkeypatch):
+def _duplicate_signoff(row):
+    raise pyodbc.IntegrityError(
+        "23000", "[23000] Cannot insert duplicate key row in object 'recon.signoff' with unique index"
+                 " 'UX_signoff_one_signed'. The duplicate key value is (employees, 2026-09). (2601)")
+
+
+def test_insert_refused_by_unique_index_deletes_the_evidence_file(project, repo, monkeypatch):
     ready(repo)
-
-    def boom(row):
-        raise RuntimeError("db down")
-
-    monkeypatch.setattr(repo, "insert_signoff", boom)
-    with pytest.raises(RuntimeError, match="db down"):
+    monkeypatch.setattr(repo, "insert_signoff", _duplicate_signoff)
+    with pytest.raises(pyodbc.IntegrityError, match="UX_signoff_one_signed"):
         do_sign(project, repo)
     assert list(project.settings.evidence_dir.rglob("*.xlsx")) == []
+
+
+def test_insert_refused_with_signoff_refused_deletes_the_evidence_file(project, repo, monkeypatch):
+    ready(repo)
+
+    def refuse(row):
+        raise SignoffRefused(["no"])
+
+    monkeypatch.setattr(repo, "insert_signoff", refuse)
+    with pytest.raises(SignoffRefused):
+        do_sign(project, repo)
+    assert list(project.settings.evidence_dir.rglob("*.xlsx")) == []
+
+
+@pytest.mark.parametrize("error", [RuntimeError("connection lost"),
+                                   pyodbc.IntegrityError("23000", "some other constraint")])
+def test_insert_outcome_unknown_keeps_the_evidence_file(project, repo, monkeypatch, error):
+    ready(repo)
+    calls = []
+
+    def lost_ack(row):
+        calls.append(row)
+        raise error
+
+    monkeypatch.setattr(repo, "insert_signoff", lost_ack)
+    with pytest.raises(SignoffOutcomeUnknown) as exc:
+        do_sign(project, repo)
+    final = _final_path(project)
+    assert exc.value.__cause__ is error and exc.value.evidence_path == final
+    message = str(exc.value)
+    assert "check recon.signoff for employees 2026-09" in message and str(final) in message
+    assert final.is_file() and stat.S_IMODE(final.stat().st_mode) == stat.S_IREAD
+    assert hashlib.sha256(final.read_bytes()).hexdigest() == calls[0].evidence_sha256
+    assert [p.name for p in final.parent.iterdir()] == [final.name]  # no temp file left
+
+
+def test_cli_signoff_outcome_unknown_exits_2_with_message(cli_env, repo, monkeypatch):
+    ready(repo)
+
+    def lost_ack(row):
+        raise RuntimeError("connection lost")
+
+    monkeypatch.setattr(repo, "insert_signoff", lost_ack)
+    res = CliRunner().invoke(app, ["signoff", "--domain", "employees", "--period", P, "--comment", "x",
+                                   "--root", str(cli_env)])
+    assert res.exit_code == 2
+    assert "check recon.signoff for employees 2026-09" in res.output and "recon_evidence_employees" in res.output
 
 
 def _final_path(project):
@@ -291,11 +341,8 @@ def test_insert_failure_deletes_only_its_own_file(project, repo, monkeypatch):
     earlier = sorted(project.settings.evidence_dir.rglob("*.xlsx"))
     assert len(earlier) == 1
 
-    def boom(row):
-        raise RuntimeError("db down")
-
-    monkeypatch.setattr(repo, "insert_signoff", boom)
-    with pytest.raises(RuntimeError, match="db down"):
+    monkeypatch.setattr(repo, "insert_signoff", _duplicate_signoff)
+    with pytest.raises(pyodbc.IntegrityError):
         do_sign(project, repo, now=datetime(2026, 10, 5, tzinfo=UTC))
     assert sorted(project.settings.evidence_dir.rglob("*.xlsx")) == earlier
     assert [p for p in earlier[0].parent.iterdir()] == earlier

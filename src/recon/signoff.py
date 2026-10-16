@@ -9,6 +9,8 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pyodbc
+
 from recon.config.loader import Project
 from recon.excel.export import export_workbook
 from recon.model import SignoffRow
@@ -21,6 +23,26 @@ class SignoffRefused(Exception):
     def __init__(self, reasons: list[str]):
         super().__init__("; ".join(reasons))
         self.reasons = reasons
+
+
+class SignoffOutcomeUnknown(Exception):
+    """Recording the sign-off failed in a way that may still have committed; the evidence file is kept."""
+
+    def __init__(self, domain: str, period_label: str, evidence_path: Path, cause: BaseException):
+        super().__init__(
+            f"sign-off outcome unknown ({cause}): check recon.signoff for {domain} {period_label};"
+            f" the evidence file was kept: {evidence_path}")
+        self.evidence_path = evidence_path
+
+
+_ONE_SIGNED_INDEX = "UX_signoff_one_signed"
+
+
+def _definitely_refused(exc: BaseException) -> bool:
+    """True when ``insert_signoff`` certainly recorded nothing (so its evidence file may be deleted)."""
+    if isinstance(exc, SignoffRefused):
+        return True
+    return isinstance(exc, pyodbc.IntegrityError) and _ONE_SIGNED_INDEX in str(exc)
 
 
 def _is_signer(project: Project, repo: Repository, domain: str) -> tuple[bool, str]:
@@ -79,6 +101,7 @@ def sign_off(project: Project, repo: Repository, *, domain: str, period_label: s
     # so a concurrent or earlier sign-off's frozen evidence is never overwritten (or cleaned up by us).
     tmp: Path | None = final.with_name(f".{final.name}.{uuid.uuid4().hex}.tmp")
     linked = False
+    inserting = False
     try:
         export_workbook(repo, domain=domain, period_label=period_label, run_id=run.run_id,
                         out_path=tmp, evidence=True)
@@ -96,15 +119,21 @@ def sign_off(project: Project, repo: Repository, *, domain: str, period_label: s
         still_active = repo.breaks_for(domain, period_label, statuses={"open", "investigating"})
         if latest is None or latest.run_id != run.run_id or still_active:
             raise SignoffRefused(["state changed during sign-off; retry"])
+        inserting = True
         repo.insert_signoff(SignoffRow(
             signoff_id=None, domain=domain, period_label=period_label, run_id=run.run_id, signed_by=user,
             signed_at=now, comment=comment, open_break_count=0, accepted_break_count=accepted,
             evidence_path=str(final), evidence_sha256=digest, status="signed",
         ))
-    except BaseException:
+    except BaseException as exc:
         # delete only files this call created
         if tmp is not None and tmp.exists():
             tmp.unlink()
+        if inserting and not _definitely_refused(exc):
+            # the insert may have committed (e.g. a lost acknowledgement): keep the evidence it points to
+            if isinstance(exc, Exception):
+                raise SignoffOutcomeUnknown(domain, period_label, final, exc) from exc
+            raise
         if linked and final.exists():
             os.chmod(final, stat.S_IWRITE | stat.S_IREAD)
             final.unlink()
