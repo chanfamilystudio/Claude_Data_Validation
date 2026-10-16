@@ -44,13 +44,13 @@ FROM (
             MAX(base.f2_raw) AS f2_raw
         FROM (
             SELECT
-                REPLACE(REPLACE(ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[employee_id]) COLLATE Latin1_General_100_BIN2)), N''), N'∅'), '\', N'\\'), '|', N'\|') + N'|' + REPLACE(REPLACE(ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[cost_center]) COLLATE Latin1_General_100_BIN2)), N''), N'∅'), '\', N'\\'), '|', N'\|') AS business_key,
+                REPLACE(REPLACE(ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[employee_id], 126) COLLATE Latin1_General_100_BIN2)), N''), N'∅'), '\', N'\\'), '|', N'\|') + N'|' + REPLACE(REPLACE(ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[cost_center], 126) COLLATE Latin1_General_100_BIN2)), N''), N'∅'), '\', N'\\'), '|', N'\|') AS business_key,
                 -- f1: annual_salary vs SALARY (int)
-                TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[annual_salary]))) = N'' THEN NULL ELSE s.[annual_salary] END AS BIGINT) AS f1_val,
-                CONVERT(NVARCHAR(4000), s.[annual_salary]) AS f1_raw,
+                TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[annual_salary], 126))) = N'' THEN NULL ELSE s.[annual_salary] END AS BIGINT) AS f1_val,
+                CONVERT(NVARCHAR(4000), s.[annual_salary], 126) AS f1_raw,
                 -- f2: active vs INACTIVE (bool)
-                TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[active]))) = N'' THEN NULL ELSE s.[active] END AS BIT) AS f2_val,
-                CONVERT(NVARCHAR(4000), s.[active]) AS f2_raw
+                TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[active], 126))) = N'' THEN NULL ELSE s.[active] END AS BIT) AS f2_val,
+                CONVERT(NVARCHAR(4000), s.[active], 126) AS f2_raw
             FROM (SELECT * FROM [stg_wd].[workers]) AS s
         ) AS base
         GROUP BY base.business_key
@@ -65,13 +65,13 @@ FROM (
             MAX(base.f2_raw) AS f2_raw
         FROM (
             SELECT
-                REPLACE(REPLACE(ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[EMPLOYID]) COLLATE Latin1_General_100_BIN2)), N''), N'∅'), '\', N'\\'), '|', N'\|') + N'|' + REPLACE(REPLACE(ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[DEPRTMNT]) COLLATE Latin1_General_100_BIN2)), N''), N'∅'), '\', N'\\'), '|', N'\|') AS business_key,
+                REPLACE(REPLACE(ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[EMPLOYID], 126) COLLATE Latin1_General_100_BIN2)), N''), N'∅'), '\', N'\\'), '|', N'\|') + N'|' + REPLACE(REPLACE(ISNULL(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[DEPRTMNT], 126) COLLATE Latin1_General_100_BIN2)), N''), N'∅'), '\', N'\\'), '|', N'\|') AS business_key,
                 -- f1: annual_salary vs SALARY (int)
-                TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[SALARY]))) = N'' THEN NULL ELSE s.[SALARY] END AS BIGINT) AS f1_val,
-                CONVERT(NVARCHAR(4000), s.[SALARY]) AS f1_raw,
+                TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[SALARY], 126))) = N'' THEN NULL ELSE s.[SALARY] END AS BIGINT) AS f1_val,
+                CONVERT(NVARCHAR(4000), s.[SALARY], 126) AS f1_raw,
                 -- f2: active vs INACTIVE (bool)
-                TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[INACTIVE]))) = N'' THEN NULL ELSE s.[INACTIVE] END AS BIT) AS f2_val,
-                CONVERT(NVARCHAR(4000), s.[INACTIVE]) AS f2_raw
+                TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[INACTIVE], 126))) = N'' THEN NULL ELSE s.[INACTIVE] END AS BIT) AS f2_val,
+                CONVERT(NVARCHAR(4000), s.[INACTIVE], 126) AS f2_raw
             FROM (SELECT * FROM [stg_gp].[UPR00100]) AS s
         ) AS base
         GROUP BY base.business_key

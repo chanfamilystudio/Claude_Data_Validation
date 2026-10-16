@@ -12,7 +12,7 @@ from recon.config.models import DatasetConfig, MappingConfig, RecordMatchRule
 from recon.connectors.sqlserver import SqlServerConnector
 from recon.periods import resolve_period
 from recon.sqlgen import generate
-from recon.sqlgen.common import PARAM_HEADER, GenContext, params_for
+from recon.sqlgen.common import DIFF_COLUMNS, DIFFS_DDL, PARAM_HEADER, GenContext, params_for
 
 pytestmark = pytest.mark.integration
 
@@ -21,7 +21,7 @@ SNAPSHOT_PARAMS = params_for(None, AS_OF)
 
 _TABLES = (
     "t_wd.workers", "t_gp.employees", "t_xref.cc_map", "t_wd.ck", "t_gp.ck",
-    "t_wd.jrnl", "t_gp.gl", "t_wd.cs", "t_gp.cs",
+    "t_wd.jrnl", "t_gp.gl", "t_wd.cs", "t_gp.cs", "t_wd.lossy", "t_gp.lossy", "t_xref.plain_map",
 )
 _SCHEMAS = ("t_wd", "t_gp", "t_xref")
 
@@ -205,6 +205,22 @@ def test_diff_sql_runs_as_derived_table_with_contract_types(emp_tables):
     assert _diffs_via_temp_table(emp_tables, g.diff_sql, SNAPSHOT_PARAMS) == EXPECTED_EMP
 
 
+def test_executor_temp_table_pattern(emp_tables):
+    """DDL in a parameterless batch, INSERT ... SELECT with bound params, read in a separate call."""
+    db = emp_tables
+    g = generate(EMP_RULE, _ctx(WD, GP, mappings=(CC_MAP,)))
+    db.execute("DROP TABLE IF EXISTS #diffs")
+    db.execute(DIFFS_DDL)
+    try:
+        db.execute(
+            PARAM_HEADER + f"INSERT INTO #diffs ({DIFF_COLUMNS}) SELECT * FROM (\n{g.diff_sql}\n) d",
+            *SNAPSHOT_PARAMS,
+        )
+        assert _rows_as_set(db.query("SELECT * FROM #diffs")) == EXPECTED_EMP
+    finally:
+        db.execute("DROP TABLE IF EXISTS #diffs")
+
+
 def test_counts_sql(emp_tables):
     g = generate(EMP_RULE, _ctx(WD, GP, mappings=(CC_MAP,)))
     rows = emp_tables.query(PARAM_HEADER + g.counts_sql, *SNAPSHOT_PARAMS)
@@ -255,6 +271,53 @@ def test_null_and_blank_semantics(emp_tables):
         ("N2", "value_mismatch", "cost_center", "D1", None, None),
         ("N2", "value_mismatch", "hire_date", None, "2020-01-01", None),
         ("N2", "value_mismatch", "annual_salary", "7.000000", None, None),
+    }
+
+
+def test_undated_mapping_with_duplicate_from_rows_raises(emp_tables):
+    db = emp_tables
+    db.execute("CREATE TABLE t_xref.plain_map (wd_cc NVARCHAR(20), gp_dept NVARCHAR(20))")
+    db.execute("INSERT INTO t_xref.plain_map VALUES (N'CC1', N'D1'), (N'CC2', N'D2')")
+    plain = MappingConfig.model_validate(
+        {"name": "cc_plain", "object": "t_xref.plain_map", "from": "wd_cc", "to": "gp_dept"}
+    )
+    rule = EMP_RULE.model_copy(
+        update={"compare": [EMP_RULE.compare[0].model_copy(update={"via_mapping": "cc_plain"})]}
+    )
+    g = generate(rule, _ctx(WD, GP, mappings=(plain,)))
+    db.query(PARAM_HEADER + g.checks_sql, *SNAPSHOT_PARAMS)  # unique: must not raise
+    db.execute("INSERT INTO t_xref.plain_map VALUES (N' cc1', N'D9')")
+    with pytest.raises(pyodbc.Error, match="ambiguous mapping cc_plain: value CC1 has 2 valid rows"):
+        db.query(PARAM_HEADER + g.checks_sql, *SNAPSHOT_PARAMS)
+
+
+# --------------------------------------------------------------------------- lossless text
+
+
+def test_float_and_datetime_compared_as_string_are_lossless(schemas):
+    """Default `string` type: floats keep full precision and datetimes keep seconds (style 126)."""
+    db = schemas
+    for t in ("t_wd.lossy", "t_gp.lossy"):
+        db.execute(f"CREATE TABLE {t} (k FLOAT, f FLOAT, d DATETIME)")
+    db.execute(
+        "INSERT INTO t_wd.lossy VALUES (1234567, 123456.78, '2026-09-30T14:35:07'),"
+        " (1234568, 1, '2026-01-01T00:00:00')"
+    )
+    db.execute(
+        "INSERT INTO t_gp.lossy VALUES (1234567, 123456.79, '2026-09-30T14:35:08'),"
+        " (1234568, 1, '2026-01-01T00:00:00')"
+    )
+    rule = _rule(
+        left="wd_lossy",
+        right="gp_lossy",
+        keys=[{"left": "k", "right": "k"}],
+        compare=[{"left": "f", "right": "f"}, {"left": "d", "right": "d"}],
+    )
+    g = generate(rule, _ctx(_ds("wd_lossy", "t_wd.lossy"), _ds("gp_lossy", "t_gp.lossy")))
+    key = "1.234567000000000E+006"  # 1234567 and 1234568 stay distinct keys (no __key__ duplicate)
+    assert _diffs(db, g.diff_sql, SNAPSHOT_PARAMS) == {
+        (key, "value_mismatch", "f", "1.234567800000000E+005", "1.234567900000000E+005", None),
+        (key, "value_mismatch", "d", "2026-09-30T14:35:07", "2026-09-30T14:35:08", None),
     }
 
 

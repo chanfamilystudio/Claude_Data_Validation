@@ -27,6 +27,22 @@ BATCH_SEPARATOR = "\nGO\n"
 # ``case_insensitive: false``, and differing left/right column collations would conflict).
 COMPARE_COLLATION = "Latin1_General_100_BIN2"
 
+# Executors that need the diffs in a temp table create it with this DDL in a parameterless batch,
+# then run ``INSERT INTO #diffs (<columns>) SELECT * FROM (<diff_sql>) d`` with bound parameters: a
+# temp table created by SELECT ... INTO inside a parameterized (RPC) batch is dropped when the call
+# returns. COLLATE DATABASE_DEFAULT keeps tempdb's collation out of later joins.
+DIFFS_DDL = (
+    "CREATE TABLE #diffs (\n"
+    "    business_key NVARCHAR(400) COLLATE DATABASE_DEFAULT NOT NULL,\n"
+    "    break_type VARCHAR(30) COLLATE DATABASE_DEFAULT NOT NULL,\n"
+    "    field_name NVARCHAR(128) COLLATE DATABASE_DEFAULT NULL,\n"
+    "    left_value NVARCHAR(4000) COLLATE DATABASE_DEFAULT NULL,\n"
+    "    right_value NVARCHAR(4000) COLLATE DATABASE_DEFAULT NULL,\n"
+    "    diff DECIMAL(38,6) NULL\n"
+    ");"
+)
+DIFF_COLUMNS = "business_key, break_type, field_name, left_value, right_value, diff"
+
 NULL_KEY = "∅"  # stands in for a NULL key part inside business_key
 
 SQL_TYPES = {
@@ -80,9 +96,19 @@ def qi(identifier: str) -> str:
     return ".".join(f"[{part}]" for part in identifier.split("."))
 
 
+def text_of(expr: str) -> str:
+    """A source value as NVARCHAR(4000) text, losslessly.
+
+    Style 126 renders float/real in full precision, money with 4 decimals and datetimes as ISO 8601
+    with seconds (the default style rounds floats to 6 digits and drops seconds); it is ignored for
+    character, integer, decimal, bit, date and uniqueidentifier values.
+    """
+    return f"CONVERT(NVARCHAR(4000), {expr}, 126)"
+
+
 def norm_string(expr: str, normalize: Normalize) -> str:
     """``expr`` as a normalized NVARCHAR(4000): optional trim (blank -> NULL) and upper-casing."""
-    out = f"CONVERT(NVARCHAR(4000), {expr}) COLLATE {COMPARE_COLLATION}"
+    out = f"{text_of(expr)} COLLATE {COMPARE_COLLATION}"
     if normalize.trim:
         out = f"NULLIF(LTRIM(RTRIM({out})), N'')"
     if normalize.case_insensitive:
@@ -102,7 +128,7 @@ def typed(expr: str, type_: str, normalize: Normalize | None = None) -> str:
         sql_type = SQL_TYPES[type_]
     except KeyError:
         raise ValueError(f"unknown compare type {type_!r}") from None
-    blank_to_null = f"CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), {expr}))) = N'' THEN NULL ELSE {expr} END"
+    blank_to_null = f"CASE WHEN LTRIM(RTRIM({text_of(expr)})) = N'' THEN NULL ELSE {expr} END"
     return f"TRY_CAST({blank_to_null} AS {sql_type})"
 
 

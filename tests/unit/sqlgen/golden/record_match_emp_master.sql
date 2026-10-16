@@ -3,10 +3,10 @@ DECLARE @ambiguous_cc_to_dept NVARCHAR(2048);
 SELECT TOP (1) @ambiguous_cc_to_dept = N'ambiguous mapping cc_to_dept: value ' + a.from_value
     + N' has ' + CONVERT(NVARCHAR(20), a.valid_rows) + N' valid rows'
 FROM (
-    SELECT UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), mp.[wd_cost_center]) COLLATE Latin1_General_100_BIN2)), N'')) AS from_value, COUNT_BIG(*) AS valid_rows
+    SELECT UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), mp.[wd_cost_center], 126) COLLATE Latin1_General_100_BIN2)), N'')) AS from_value, COUNT_BIG(*) AS valid_rows
     FROM (SELECT * FROM [xref].[cost_center_map] WHERE [eff_start] <= @as_of AND ([eff_end] IS NULL OR [eff_end] >= @as_of)) AS mp
-    WHERE UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), mp.[wd_cost_center]) COLLATE Latin1_General_100_BIN2)), N'')) IS NOT NULL
-    GROUP BY UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), mp.[wd_cost_center]) COLLATE Latin1_General_100_BIN2)), N''))
+    WHERE UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), mp.[wd_cost_center], 126) COLLATE Latin1_General_100_BIN2)), N'')) IS NOT NULL
+    GROUP BY UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), mp.[wd_cost_center], 126) COLLATE Latin1_General_100_BIN2)), N''))
     HAVING COUNT_BIG(*) > 1
 ) AS a
 ORDER BY a.from_value;
@@ -80,22 +80,22 @@ FROM (
             MAX(base.f4_val) AS f4_val
         FROM (
             SELECT
-                REPLACE(REPLACE(ISNULL(UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[employee_id]) COLLATE Latin1_General_100_BIN2)), N'')), N'∅'), '\', N'\\'), '|', N'\|') AS business_key,
+                REPLACE(REPLACE(ISNULL(UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[employee_id], 126) COLLATE Latin1_General_100_BIN2)), N'')), N'∅'), '\', N'\\'), '|', N'\|') AS business_key,
                 -- f1: cost_center via cc_to_dept vs DEPRTMNT (string)
-                CONVERT(NVARCHAR(4000), s.[cost_center]) AS f1_src,
-                CASE WHEN UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[cost_center]) COLLATE Latin1_General_100_BIN2)), N'')) IS NOT NULL AND m1.[wd_cost_center] IS NULL THEN 1 ELSE 0 END AS f1_unmapped,
-                UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), m1.[gp_dept]) COLLATE Latin1_General_100_BIN2)), N'')) AS f1_val,
+                CONVERT(NVARCHAR(4000), s.[cost_center], 126) AS f1_src,
+                CASE WHEN UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[cost_center], 126) COLLATE Latin1_General_100_BIN2)), N'')) IS NOT NULL AND m1.[wd_cost_center] IS NULL THEN 1 ELSE 0 END AS f1_unmapped,
+                UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), m1.[gp_dept], 126) COLLATE Latin1_General_100_BIN2)), N'')) AS f1_val,
                 -- f2: hire_date vs STRTDATE (date)
-                TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[hire_date]))) = N'' THEN NULL ELSE s.[hire_date] END AS DATE) AS f2_val,
-                CONVERT(NVARCHAR(4000), s.[hire_date]) AS f2_raw,
+                TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[hire_date], 126))) = N'' THEN NULL ELSE s.[hire_date] END AS DATE) AS f2_val,
+                CONVERT(NVARCHAR(4000), s.[hire_date], 126) AS f2_raw,
                 -- f3: annual_salary vs SALARY (decimal)
-                TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[annual_salary]))) = N'' THEN NULL ELSE s.[annual_salary] END AS DECIMAL(38,6)) AS f3_val,
-                CONVERT(NVARCHAR(4000), s.[annual_salary]) AS f3_raw,
+                TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[annual_salary], 126))) = N'' THEN NULL ELSE s.[annual_salary] END AS DECIMAL(38,6)) AS f3_val,
+                CONVERT(NVARCHAR(4000), s.[annual_salary], 126) AS f3_raw,
                 -- f4: national_id vs SOCSCNUM (string, pii)
-                HASHBYTES('SHA2_256', UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[national_id]) COLLATE Latin1_General_100_BIN2)), N''))) AS f4_val
+                HASHBYTES('SHA2_256', UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[national_id], 126) COLLATE Latin1_General_100_BIN2)), N''))) AS f4_val
             FROM (SELECT * FROM [stg_wd].[workers]) AS s
             LEFT JOIN (SELECT * FROM [xref].[cost_center_map] WHERE [eff_start] <= @as_of AND ([eff_end] IS NULL OR [eff_end] >= @as_of)) AS m1
-                ON UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), m1.[wd_cost_center]) COLLATE Latin1_General_100_BIN2)), N'')) = UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[cost_center]) COLLATE Latin1_General_100_BIN2)), N''))
+                ON UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), m1.[wd_cost_center], 126) COLLATE Latin1_General_100_BIN2)), N'')) = UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[cost_center], 126) COLLATE Latin1_General_100_BIN2)), N''))
         ) AS base
         GROUP BY base.business_key
     ) AS l
@@ -111,17 +111,17 @@ FROM (
             MAX(base.f4_val) AS f4_val
         FROM (
             SELECT
-                REPLACE(REPLACE(ISNULL(UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[EMPLOYID]) COLLATE Latin1_General_100_BIN2)), N'')), N'∅'), '\', N'\\'), '|', N'\|') AS business_key,
+                REPLACE(REPLACE(ISNULL(UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[EMPLOYID], 126) COLLATE Latin1_General_100_BIN2)), N'')), N'∅'), '\', N'\\'), '|', N'\|') AS business_key,
                 -- f1: cost_center via cc_to_dept vs DEPRTMNT (string)
-                UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[DEPRTMNT]) COLLATE Latin1_General_100_BIN2)), N'')) AS f1_val,
+                UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[DEPRTMNT], 126) COLLATE Latin1_General_100_BIN2)), N'')) AS f1_val,
                 -- f2: hire_date vs STRTDATE (date)
-                TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[STRTDATE]))) = N'' THEN NULL ELSE s.[STRTDATE] END AS DATE) AS f2_val,
-                CONVERT(NVARCHAR(4000), s.[STRTDATE]) AS f2_raw,
+                TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[STRTDATE], 126))) = N'' THEN NULL ELSE s.[STRTDATE] END AS DATE) AS f2_val,
+                CONVERT(NVARCHAR(4000), s.[STRTDATE], 126) AS f2_raw,
                 -- f3: annual_salary vs SALARY (decimal)
-                TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[SALARY]))) = N'' THEN NULL ELSE s.[SALARY] END AS DECIMAL(38,6)) AS f3_val,
-                CONVERT(NVARCHAR(4000), s.[SALARY]) AS f3_raw,
+                TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[SALARY], 126))) = N'' THEN NULL ELSE s.[SALARY] END AS DECIMAL(38,6)) AS f3_val,
+                CONVERT(NVARCHAR(4000), s.[SALARY], 126) AS f3_raw,
                 -- f4: national_id vs SOCSCNUM (string, pii)
-                HASHBYTES('SHA2_256', UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[SOCSCNUM]) COLLATE Latin1_General_100_BIN2)), N''))) AS f4_val
+                HASHBYTES('SHA2_256', UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[SOCSCNUM], 126) COLLATE Latin1_General_100_BIN2)), N''))) AS f4_val
             FROM (SELECT * FROM [stg_gp].[UPR00100]) AS s
         ) AS base
         GROUP BY base.business_key

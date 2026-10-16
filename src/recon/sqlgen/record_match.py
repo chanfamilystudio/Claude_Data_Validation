@@ -31,6 +31,7 @@ from recon.sqlgen.common import (
     norm_string,
     pii_hash,
     qi,
+    text_of,
     typed,
 )
 
@@ -101,16 +102,16 @@ def _side_sql(rule: RecordMatchRule, source: str, fields: list[_Field], side: st
                 f"{_TAB}ON {norm_string(frm, norm)} = {norm_string(col, norm)}"
             )
             if not f.cfg.pii:
-                entries.append((f"CONVERT(NVARCHAR(4000), {col})", "src"))
+                entries.append((text_of(col), "src"))
             entries.append(
                 (f"CASE WHEN {norm_string(col, norm)} IS NOT NULL AND {frm} IS NULL THEN 1 ELSE 0 END", "unmapped")
             )
         value = typed(value_src, f.cfg.type, norm)
         if f.cfg.pii:
-            value = pii_hash(value if f.cfg.type == "string" else f"CONVERT(NVARCHAR(4000), {value})")
+            value = pii_hash(value if f.cfg.type == "string" else text_of(value))
         entries.append((value, "val"))
         if f.can_fail_cast:
-            entries.append((f"CONVERT(NVARCHAR(4000), {value_src})", "raw"))
+            entries.append((text_of(value_src), "raw"))
 
         for i, (expr, suffix) in enumerate(entries):
             name = f"{f.p}_{suffix}"
@@ -264,11 +265,11 @@ def _diff_sql(rule: RecordMatchRule, ctx: GenContext, fields: list[_Field]) -> s
 def generate_record_match(rule: RecordMatchRule, ctx: GenContext) -> GeneratedSql:
     fields = _fields(rule, ctx)
 
-    effective: dict[str, MappingConfig] = {}
+    used: dict[str, MappingConfig] = {}  # every distinct mapping, dated or not (spec 4.1)
     for f in fields:
-        if f.mapping is not None and f.mapping.effective is not None:
-            effective.setdefault(f.mapping.name, f.mapping)
-    checks = "\n".join(mapping_ambiguity_check(m, rule.normalize) for m in effective.values()) or None
+        if f.mapping is not None:
+            used.setdefault(f.mapping.name, f.mapping)
+    checks = "\n".join(mapping_ambiguity_check(m, rule.normalize) for m in used.values()) or None
 
     counts = (
         "SELECT\n"

@@ -92,6 +92,18 @@ class CompareField(_Model):
     via_mapping: str | None = None
     pii: bool = False
 
+    @model_validator(mode="after")
+    def _tolerance_only_on_numeric(self) -> CompareField:
+        if self.tolerance is None:
+            return self
+        if self.type not in ("decimal", "int"):
+            raise ValueError(f"tolerance requires type decimal or int (field {self.left!r} is {self.type})")
+        if self.pii:
+            raise ValueError(
+                f"tolerance is not allowed on pii field {self.left!r} (pii values are compared by hash)"
+            )
+        return self
+
 
 class Normalize(_Model):
     trim: bool = True

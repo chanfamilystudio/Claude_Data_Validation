@@ -1,12 +1,14 @@
 import shutil
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from conftest import edit_rule
 from recon.config.loader import ConfigError, load_project, rule_version_hash
-from recon.config.models import AcceptedValues, NotNull, Unique
+from recon.config.models import AcceptedValues, CompareField, NotNull, Unique
 
 
 def test_fixture_loads(fixture_root):
@@ -173,3 +175,31 @@ def test_version_hash_stable_and_sensitive(fixture_root):
     changed = r.model_copy(update={"max_breaks": 10})
     assert rule_version_hash(changed) != rule_version_hash(r)
     assert len(rule_version_hash(r)) == 64
+
+
+@pytest.mark.parametrize("type_", ["string", "date", "datetime", "bool"])
+def test_tolerance_rejected_on_non_numeric_field(type_):
+    with pytest.raises(ValidationError, match=f"tolerance requires type decimal or int.*'x' is {type_}"):
+        CompareField(left="x", right="X", type=type_, tolerance={"abs": "0.01"})
+
+
+def test_tolerance_rejected_on_pii_field():
+    with pytest.raises(ValidationError, match="tolerance is not allowed on pii field 'x'"):
+        CompareField(left="x", right="X", type="decimal", pii=True, tolerance={"abs": "0.01"})
+
+
+@pytest.mark.parametrize("type_", ["decimal", "int"])
+def test_tolerance_allowed_on_numeric_field(type_):
+    assert CompareField(left="x", right="X", type=type_, tolerance={"pct": "0.05"}).tolerance.pct == Decimal("0.05")
+
+
+def test_tolerance_on_date_field_is_a_loader_issue(tmp_fixture):
+    rule = yaml.safe_load((tmp_fixture / "rules/employees/emp_master_match.yaml").read_text(encoding="utf-8"))
+    rule["compare"][1]["tolerance"] = {"abs": 1}  # hire_date, type date
+    edit_rule(tmp_fixture, "employees/emp_master_match.yaml", {"compare": rule["compare"]})
+    with pytest.raises(ConfigError) as e:
+        load_project(tmp_fixture)
+    assert len(e.value.issues) == 1
+    issue = e.value.issues[0]
+    assert issue.startswith("rules/employees/emp_master_match.yaml: compare.1: ")
+    assert "tolerance requires type decimal or int (field 'hire_date' is date)" in issue

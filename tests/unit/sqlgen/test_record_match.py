@@ -75,14 +75,24 @@ def test_pii_raw_value_never_selected_for_output(fixture_project):
     assert "HASHBYTES('SHA2_256', " in diff
 
 
-def test_checks_sql_holds_ambiguity_check_for_effective_mappings_only(fixture_project):
+def test_checks_sql_holds_ambiguity_check_for_every_mapping_used(fixture_project):
     ctx = ctx_for(fixture_project)
     rule = fixture_project.rules["emp_master_match"]
     g = generate(rule, ctx)
     assert g.checks_sql == mapping_ambiguity_check(ctx.mappings["cc_to_dept"], rule.normalize)
     assert generate(_rule(), ctx).checks_sql is None
-    non_effective = _rule(compare=[{"left": "ledger", "right": "ACTINDX", "via_mapping": "wd_acct_to_gp"}])
-    assert generate(non_effective, ctx).checks_sql is None
+    undated = _rule(compare=[{"left": "ledger", "right": "ACTINDX", "via_mapping": "wd_acct_to_gp"}])
+    assert generate(undated, ctx).checks_sql == mapping_ambiguity_check(ctx.mappings["wd_acct_to_gp"], undated.normalize)
+    both = _rule(
+        compare=[
+            {"left": "ledger", "right": "ACTINDX", "via_mapping": "wd_acct_to_gp"},
+            {"left": "cc", "right": "DEPT", "via_mapping": "cc_to_dept"},
+            {"left": "cc2", "right": "DEPT2", "via_mapping": "cc_to_dept"},
+        ]
+    )
+    assert generate(both, ctx).checks_sql == "\n".join(
+        mapping_ambiguity_check(ctx.mappings[name], both.normalize) for name in ("wd_acct_to_gp", "cc_to_dept")
+    )
 
 
 def test_counts_sql(fixture_project):

@@ -5,6 +5,7 @@ import pytest
 from recon.config.models import MappingConfig, Normalize
 from recon.periods import resolve_period
 from recon.sqlgen.common import (
+    DIFFS_DDL,
     PARAM_HEADER,
     GeneratedSql,
     business_key_expr,
@@ -14,6 +15,7 @@ from recon.sqlgen.common import (
     params_for,
     pii_hash,
     qi,
+    text_of,
     typed,
 )
 
@@ -49,19 +51,19 @@ def test_qi_rejects_invalid(bad):
 
 def test_norm_string_default_trims_uppercases_and_pins_collation():
     assert norm_string("s.[x]", Normalize()) == (
-        "UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[x]) COLLATE Latin1_General_100_BIN2)), N''))"
+        "UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[x], 126) COLLATE Latin1_General_100_BIN2)), N''))"
     )
 
 
 def test_norm_string_variants():
     assert norm_string("x", Normalize(trim=False, case_insensitive=False)) == (
-        "CONVERT(NVARCHAR(4000), x) COLLATE Latin1_General_100_BIN2"
+        "CONVERT(NVARCHAR(4000), x, 126) COLLATE Latin1_General_100_BIN2"
     )
     assert norm_string("x", Normalize(trim=False, case_insensitive=True)) == (
-        "UPPER(CONVERT(NVARCHAR(4000), x) COLLATE Latin1_General_100_BIN2)"
+        "UPPER(CONVERT(NVARCHAR(4000), x, 126) COLLATE Latin1_General_100_BIN2)"
     )
     assert norm_string("x", Normalize(trim=True, case_insensitive=False)) == (
-        "NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), x) COLLATE Latin1_General_100_BIN2)), N'')"
+        "NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), x, 126) COLLATE Latin1_General_100_BIN2)), N'')"
     )
 
 
@@ -71,7 +73,7 @@ def test_norm_string_variants():
 )
 def test_typed_try_casts_with_blank_as_null(type_, sql_type):
     assert typed("s.[c]", type_) == (
-        "TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[c]))) = N'' THEN NULL ELSE s.[c] END"
+        "TRY_CAST(CASE WHEN LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[c], 126))) = N'' THEN NULL ELSE s.[c] END"
         f" AS {sql_type})"
     )
 
@@ -137,3 +139,20 @@ def test_generated_sql_full_text():
     assert g.full_text() == "\nGO\n".join(PARAM_HEADER + p for p in ["C", "N", "T", "D"])
     g2 = GeneratedSql(checks_sql=None, counts_sql="N", diff_sql="D")
     assert g2.full_text() == PARAM_HEADER + "N\nGO\n" + PARAM_HEADER + "D"
+
+
+def test_text_of_uses_lossless_style_126():
+    assert text_of("s.[x]") == "CONVERT(NVARCHAR(4000), s.[x], 126)"
+
+
+def test_diffs_ddl_matches_diff_contract():
+    assert DIFFS_DDL == (
+        "CREATE TABLE #diffs (\n"
+        "    business_key NVARCHAR(400) COLLATE DATABASE_DEFAULT NOT NULL,\n"
+        "    break_type VARCHAR(30) COLLATE DATABASE_DEFAULT NOT NULL,\n"
+        "    field_name NVARCHAR(128) COLLATE DATABASE_DEFAULT NULL,\n"
+        "    left_value NVARCHAR(4000) COLLATE DATABASE_DEFAULT NULL,\n"
+        "    right_value NVARCHAR(4000) COLLATE DATABASE_DEFAULT NULL,\n"
+        "    diff DECIMAL(38,6) NULL\n"
+        ");"
+    )
