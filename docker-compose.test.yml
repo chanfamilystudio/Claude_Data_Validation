@@ -1,0 +1,13 @@
+# Throwaway SQL Server for integration tests (see docs/operations.md, Development).
+#   docker compose -f docker-compose.test.yml up -d
+#   export RECON_TEST_DSN='Driver={ODBC Driver 18 for SQL Server};Server=localhost,1433;UID=sa;PWD=Recon_Test_Pw1!;TrustServerCertificate=yes'
+#   pytest -m integration
+services:
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: recon-mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Recon_Test_Pw1!"
+    ports:
+      - "1433:1433"
