@@ -117,7 +117,7 @@ def _totals_sheet(ws: Worksheet, repo: Repository, run_id: int | None, domain: s
     if run_id is None:
         return
     for r, t in enumerate(repo.totals_for_run(run_id, domain), start=2):
-        _write_rows(ws, [[t.group_key, t.measure, t.left_value, t.right_value, t.diff, t.tolerance_applied,
+        _write_rows(ws, [[t.rule_id, t.group_key, t.measure, t.left_value, t.right_value, t.diff, t.tolerance_applied,
                           t.within_tolerance]], r)
         if not t.within_tolerance:
             for c in range(1, len(layout.TOTALS_COLUMNS) + 1):

@@ -229,14 +229,17 @@ class RepositoryContract:
                       Decimal(0), False)
         t2 = TotalRow("dept=2", "salary", Decimal(5), Decimal(5), Decimal(0), Decimal("0.01"), True)
         t3 = TotalRow("all", "gross", Decimal(1000), Decimal(1000), Decimal(0), Decimal(0), True)
-        repo.insert_totals(c1, [t1, t2])
+        repo.insert_totals(c1, [t1, dataclasses.replace(t2, rule_id="ignored_on_insert")])
         repo.insert_totals(c2, [t3])
-        assert repo.totals_for_run(run_id, None) == [t1, t2, t3]
+        # reads carry the rule the total belongs to (from its run_check)
+        r1, r2 = (dataclasses.replace(t, rule_id="emp_total") for t in (t1, t2))
+        r3 = dataclasses.replace(t3, rule_id="pay_total")
+        assert repo.totals_for_run(run_id, None) == [r1, r2, r3]
         got = repo.totals_for_run(run_id, "employees")[0]
         assert (str(got.left_value), str(got.right_value), str(got.diff), str(got.tolerance_applied)) == (
             "100.500000", "100.000000", "0.500000", "0.000000")
-        assert repo.totals_for_run(run_id, "employees") == [t1, t2]
-        assert repo.totals_for_run(run_id, "payroll") == [t3]
+        assert repo.totals_for_run(run_id, "employees") == [r1, r2]
+        assert repo.totals_for_run(run_id, "payroll") == [r3]
         assert repo.totals_for_run(run_id, "gl") == []
         assert repo.totals_for_run(run_id + 999, None) == []
 

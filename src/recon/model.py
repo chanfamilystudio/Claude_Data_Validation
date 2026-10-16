@@ -80,6 +80,8 @@ class TotalRow:
     diff: Decimal
     tolerance_applied: Decimal
     within_tolerance: bool
+    # filled on reads (from the run_check the total belongs to); ignored when inserting totals
+    rule_id: str | None = None
 
 
 @dataclass(frozen=True)

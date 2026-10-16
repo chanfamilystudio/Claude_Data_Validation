@@ -276,7 +276,7 @@ class SqlRepository:
 
     def totals_for_run(self, run_id: int, domain: str | None) -> list[TotalRow]:
         sql = (
-            "SELECT t.group_key, t.measure, t.left_value, t.right_value, t.diff, t.tolerance_applied,"
+            "SELECT c.rule_id, t.group_key, t.measure, t.left_value, t.right_value, t.diff, t.tolerance_applied,"
             " t.within_tolerance FROM recon.total_result t"
             " JOIN recon.run_check c ON c.run_check_id = t.run_check_id"
             " JOIN recon.[rule] r ON r.rule_id = c.rule_id AND r.version_hash = c.version_hash"
@@ -288,7 +288,7 @@ class SqlRepository:
             params.append(domain)
         rows = self._db.query(sql + " ORDER BY t.total_result_id", *params)
         return [TotalRow(r["group_key"], r["measure"], r["left_value"], r["right_value"], r["diff"],
-                         r["tolerance_applied"], bool(r["within_tolerance"])) for r in rows]
+                         r["tolerance_applied"], bool(r["within_tolerance"]), rule_id=r["rule_id"]) for r in rows]
 
     # -- breaks --------------------------------------------------------------------------------
     @staticmethod

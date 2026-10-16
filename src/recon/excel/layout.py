@@ -28,7 +28,7 @@ SUMMARY_CHECK_COLUMNS = ["rule_id", "severity", "result", "rows_left", "rows_rig
                          "error_message"]
 NO_RUN = "no run"
 
-TOTALS_COLUMNS = ["group_key", "measure", "left_value", "right_value", "diff", "tolerance_applied",
+TOTALS_COLUMNS = ["rule_id", "group_key", "measure", "left_value", "right_value", "diff", "tolerance_applied",
                   "within_tolerance"]
 COMMENT_COLUMNS = ["break_id", "author", "created_at", "text"]
 AUDIT_COLUMNS = ["entity", "entity_id", "field", "old_value", "new_value", "changed_by", "changed_at",

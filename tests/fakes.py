@@ -165,7 +165,8 @@ class InMemoryRepository:
             raise LookupError(f"unknown run_check {run_check_id}")
         for row in rows:
             q = dataclasses.replace(row, left_value=dec6(row.left_value), right_value=dec6(row.right_value),
-                                    diff=dec6(row.diff), tolerance_applied=dec6(row.tolerance_applied))
+                                    diff=dec6(row.diff), tolerance_applied=dec6(row.tolerance_applied),
+                                    rule_id=None)  # not stored: reads take it from the check
             self.totals.append({"run_check_id": run_check_id, "row": q})
 
     def checks_for_run(self, run_id: int, domain: str | None = None) -> list[CheckRecord]:
@@ -190,7 +191,7 @@ class InMemoryRepository:
                              if r["rule_id"] == rec.rule_id and r["version_hash"] == rec.version_hash), None)
                 if rule is None or rule["domain"] != domain:
                     continue
-            out.append(t["row"])
+            out.append(dataclasses.replace(t["row"], rule_id=rec.rule_id))
         return out
 
     # -- breaks --------------------------------------------------------------------------------

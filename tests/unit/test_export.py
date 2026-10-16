@@ -278,8 +278,9 @@ def test_totals_sheet_highlights_out_of_tolerance(repo, out):
         Total("G2", "net", Decimal("10.5"), Decimal(10), Decimal("0.5"), Decimal("0.01"), False),
     ])
     ws = load_workbook(_export(repo, out, domain="payroll", run_id=run))["Totals"]
-    assert [c.value for c in ws[2]] == ["G1", "net", 10, 10, 0, 0.01, True]
-    assert [c.value for c in ws[3]] == ["G2", "net", 10.5, 10, 0.5, 0.01, False]
+    assert ws["A1"].value == "rule_id"
+    assert [c.value for c in ws[2]] == ["pay_tot", "G1", "net", 10, 10, 0, 0.01, True]
+    assert [c.value for c in ws[3]] == ["pay_tot", "G2", "net", 10.5, 10, 0.5, 0.01, False]
     assert ws["A2"].fill.fill_type is None
     assert all(c.fill.fill_type == "solid" for c in ws[3])
     for sheet in load_workbook(out):
