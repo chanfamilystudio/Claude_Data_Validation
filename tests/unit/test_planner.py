@@ -88,3 +88,12 @@ def test_select_rules_errors(tmp_fixture):
         select_rules(project, None, "gp_emp_quality")
     with pytest.raises(ConfigError, match="not both"):
         select_rules(project, ["employees"], "emp_master_match")
+
+
+def test_execute_run_rejects_snapshot_period(fixture_root):
+    from recon.executor import execute_run
+
+    with pytest.raises(ValueError, match="SNAPSHOT"):
+        execute_run(load_project(fixture_root), None, None, domains=None, rule_id=None,
+                    period=resolve_period("SNAPSHOT", date(2026, 10, 16)), trigger="manual", export=None,
+                    today=date(2026, 10, 16))

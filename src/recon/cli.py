@@ -16,7 +16,7 @@ from recon.db import Database, LockBusy, connection_string
 from recon.executor import execute_run
 from recon.logging_setup import configure_logging
 from recon.migrations import apply_migrations
-from recon.periods import resolve_period
+from recon.periods import SNAPSHOT, resolve_period
 from recon.repository import SqlRepository
 
 app = typer.Typer(no_args_is_help=True, help="Workday to Great Plains reconciliation engine.")
@@ -75,10 +75,8 @@ class Trigger(str, Enum):
 
 @app.command("run")
 def run(
-    period: Annotated[str, typer.Option("--period", help="YYYY-MM, current, previous or SNAPSHOT.")],
-    domain: Annotated[
-        list[str] | None, typer.Option("--domain", help="Run the rules of this domain (repeatable).")
-    ] = None,
+    period: Annotated[str, typer.Option("--period", help="YYYY-MM, current or previous.")],
+    domain: Annotated[str | None, typer.Option("--domain", help="Run the rules of this domain.")] = None,
     all_: Annotated[bool, typer.Option("--all", help="Run every active rule.")] = False,
     rule: Annotated[str | None, typer.Option("--rule", help="Run a single rule by id.")] = None,
     trigger: Annotated[Trigger, typer.Option("--trigger", help="Who started the run.")] = Trigger.manual,
@@ -86,15 +84,18 @@ def run(
     no_export: Annotated[bool, typer.Option("--no-export", help="Do not write the run workbook.")] = False,
 ) -> None:
     """Run reconciliation rules for a period."""
-    chosen = sum([bool(domain), all_, rule is not None])
+    chosen = sum([domain is not None, all_, rule is not None])
     if chosen != 1:
-        typer.echo("Specify exactly one of --domain (repeatable), --all or --rule.")
+        typer.echo("Specify exactly one of --domain, --all or --rule.")
+        raise typer.Exit(2)
+    if period.strip().upper() == SNAPSHOT:
+        typer.echo("--period must be YYYY-MM, current or previous (snapshot rules run within every period)")
         raise typer.Exit(2)
     today = date.today()
     try:
         run_period = resolve_period(period, today)
     except ValueError as exc:
-        typer.echo(str(exc))
+        typer.echo(f"invalid period {period!r}: expected YYYY-MM, current or previous")
         raise typer.Exit(2) from exc
     try:
         project = load_project(root)
@@ -115,7 +116,7 @@ def run(
         # --no-export is accepted (and has nothing to switch off).
         try:
             outcome = execute_run(
-                project, database, repo, domains=list(domain) if domain else None, rule_id=rule,
+                project, database, repo, domains=[domain] if domain is not None else None, rule_id=rule,
                 period=run_period, trigger=trigger.value, export=None, today=today,
             )
         except Exception as exc:  # exit 1 would read as "breaks found"
@@ -124,7 +125,12 @@ def run(
         for message in outcome.messages:
             typer.echo(message)
         if outcome.run_id is not None:
-            for check in repo.checks_for_run(outcome.run_id):
+            try:
+                checks = repo.checks_for_run(outcome.run_id)
+            except Exception as exc:  # exit 1 would read as "breaks found"
+                typer.echo(f"Run {outcome.run_id}: {outcome.status} (cannot read its checks: {exc})")
+                raise typer.Exit(2) from exc
+            for check in checks:
                 if check.result == "error":
                     typer.echo(f"{check.rule_id}: error: {check.error_message}")
                 else:

@@ -79,15 +79,22 @@ def git_commit(root: Path) -> str | None:
     return sha if res.returncode == 0 and sha else None
 
 
-def _gen_context(project: Project, db: Database, rules: list[Rule]) -> GenContext:
+def _sources(project: Project, db: Database, rules: list[Rule]) -> tuple[GenContext, dict[str, str]]:
+    """The generator context, plus the freshness source of each dataset that declares freshness.
+
+    Freshness is measured over the whole dataset (its ``filter`` kept, its period predicate dropped),
+    so a closed period whose rows were loaded long ago is not reported stale.
+    """
     names = {n for r in rules for n in r.dataset_names()}
-    sources = {
-        n: get_connector(project.sources[project.datasets[n].source].connector, db).as_sql_source(
-            project.datasets[n]
-        )
-        for n in names
-    }
-    return GenContext(datasets=project.datasets, sources=sources, mappings=project.mappings)
+    sources: dict[str, str] = {}
+    fresh: dict[str, str] = {}
+    for n in names:
+        ds = project.datasets[n]
+        connector = get_connector(project.sources[ds.source].connector, db)
+        sources[n] = connector.as_sql_source(ds)
+        if ds.freshness is not None:
+            fresh[n] = connector.as_sql_source(ds.model_copy(update={"period_column": None}))
+    return GenContext(datasets=project.datasets, sources=sources, mappings=project.mappings), fresh
 
 
 # --------------------------------------------------------------------------- one rule
@@ -104,9 +111,10 @@ def _drop_temp_tables(db: Database) -> None:
 class _RuleRunner:
     """Executes one rule inside the caller's transaction; fills ``rows_*`` and ``gen`` as it goes."""
 
-    def __init__(self, project: Project, db: Database, repo: Repository, ctx: GenContext, rule: Rule,
-                 run_id: int, period: RunPeriod, today: date):
+    def __init__(self, project: Project, db: Database, repo: Repository, ctx: GenContext,
+                 fresh: dict[str, str], rule: Rule, run_id: int, period: RunPeriod, today: date):
         self.project, self.db, self.repo, self.ctx, self.rule = project, db, repo, ctx, rule
+        self.fresh = fresh
         self.run_id = run_id
         self.label = rule_period_label(rule, project, period)
         self.period = period
@@ -125,7 +133,7 @@ class _RuleRunner:
                 continue
             col = "[" + ds.freshness.column.replace("]", "]]") + "]"
             rows = self._with_params(
-                f"SELECT DATEDIFF(hour, MAX({col}), SYSDATETIME()) AS age_hours FROM {self.ctx.sources[name]} s"
+                f"SELECT DATEDIFF(hour, MAX({col}), SYSDATETIME()) AS age_hours FROM {self.fresh[name]} s"
             )
             age = rows[0]["age_hours"] if rows else None
             if age is None or age > ds.freshness.max_age_hours:
@@ -182,9 +190,9 @@ class _RuleRunner:
         return rec
 
 
-def _run_rule(project: Project, db: Database, repo: Repository, ctx: GenContext, rule: Rule, run_id: int,
-              period: RunPeriod, today: date) -> CheckRecord:
-    runner = _RuleRunner(project, db, repo, ctx, rule, run_id, period, today)
+def _run_rule(project: Project, db: Database, repo: Repository, ctx: GenContext, fresh: dict[str, str],
+              rule: Rule, run_id: int, period: RunPeriod, today: date) -> CheckRecord:
+    runner = _RuleRunner(project, db, repo, ctx, fresh, rule, run_id, period, today)
     started = time.monotonic()
     db.set_timeout(rule.timeout_s)
     try:
@@ -223,6 +231,12 @@ def execute_run(
     export: Callable[[int], Path] | None,
     today: date,
 ) -> RunOutcome:
+    """Run the selected rules for a calendar-month ``period``.
+
+    ``run.domain`` is the single requested domain (or the ``rule_id``'s domain), NULL otherwise.
+    """
+    if period.label == SNAPSHOT:
+        raise ValueError("a run needs a calendar-month period, not SNAPSHOT")
     try:
         rules = select_rules(project, domains, rule_id)
     except ConfigError as exc:
@@ -238,18 +252,26 @@ def execute_run(
         return _refused(issues)
 
     run_domains = sorted({r.domain for r in rules})
+    if rule_id is not None:
+        run_domain = rules[0].domain
+    else:
+        run_domain = domains[0] if domains is not None and len(domains) == 1 else None
+    # Snapshot-labelled breaks are shared by every period's runs: lock them per domain as well.
+    resources = {f"recon:{d}:{period.label}" for d in run_domains} | {
+        f"recon:{r.domain}:{SNAPSHOT}" for r in rules if rule_period_label(r, project, period) == SNAPSHOT
+    }
     with ExitStack() as locks:
-        for resource in (f"recon:{d}:{period.label}" for d in run_domains):
+        for resource in sorted(resources):
             try:
                 locks.enter_context(db.applock(resource))
             except LockBusy:
                 return _refused([f"run already in progress for {resource}"])
-        return _locked_run(project, db, repo, rules, run_domains, period, trigger, export, today)
+        return _locked_run(project, db, repo, rules, run_domains, run_domain, period, trigger, export, today)
 
 
 def _locked_run(project: Project, db: Database, repo: Repository, rules: list[Rule], run_domains: list[str],
-                period: RunPeriod, trigger: str, export: Callable[[int], Path] | None,
-                today: date) -> RunOutcome:
+                run_domain: str | None, period: RunPeriod, trigger: str,
+                export: Callable[[int], Path] | None, today: date) -> RunOutcome:
     messages: list[str] = []
     orphans = repo.fail_orphan_runs(period.label, run_domains)
     if orphans:
@@ -262,17 +284,17 @@ def _locked_run(project: Project, db: Database, repo: Repository, rules: list[Ru
         if repo.active_signoff(d, period.label) is not None:
             messages.append(f"warning: {d} {period.label} is signed off; new breaks are flagged post_signoff")
 
-    run_id = repo.open_run(trigger, run_domains[0] if len(run_domains) == 1 else None, period.label,
+    run_id = repo.open_run(trigger, run_domain, period.label,
                            period.start, period.end, git_commit(project.root), recon.__version__)
     results: list[str] = []
     aborted = False
     with log_context(run_id=run_id):
         log.info("run %s started: %d rule(s), period %s, trigger %s", run_id, len(rules), period.label, trigger)
         try:
-            ctx = _gen_context(project, db, rules)
+            ctx, fresh = _sources(project, db, rules)
             for rule in rules:
                 with log_context(rule_id=rule.id):
-                    rec = _run_rule(project, db, repo, ctx, rule, run_id, period, today)
+                    rec = _run_rule(project, db, repo, ctx, fresh, rule, run_id, period, today)
                     if rec.result == "error":
                         log.warning("check %s: error after %d ms: %s", rule.id, rec.duration_ms, rec.error_message)
                     else:

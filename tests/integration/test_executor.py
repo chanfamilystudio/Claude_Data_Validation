@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import date
 
+import pyodbc
 import pytest
 from typer.testing import CliRunner
 
@@ -240,9 +241,25 @@ def test_stale_source_is_an_error(staging, repo, tmp_fixture):
     assert _count(db, "total_result") == 0 and _count(db, "[break]") == 0
 
 
-def test_freshness_without_rows_in_period_is_stale(staging, repo, tmp_fixture):
-    out = _run(tmp_fixture, staging, domains=["payroll"], period=resolve_period("2026-08", TODAY))
-    assert _checks(repo, out.run_id)["pay_jrnl_totals"].error_message == "stale source wd_pay_jrnl"
+def test_freshness_ignores_the_period_predicate(staging, repo, tmp_fixture):
+    db = staging
+    # a closed period whose rows were loaded long ago; the table's latest load is recent (other periods)
+    db.execute("INSERT INTO stg_wd.payroll_journal VALUES ('A6000', 70.00, 0, '2026-08-20',"
+               " DATEADD(day, -40, SYSDATETIME()))")
+    db.execute("INSERT INTO stg_gp.GL20000 VALUES (100, 70, 0, '2026-08-20', 'UPRCC')")
+    out = _run(tmp_fixture, db, domains=["payroll"], period=resolve_period("2026-08", TODAY))
+    assert out.exit_code == 0
+    check = _checks(repo, out.run_id)["pay_jrnl_totals"]
+    assert (check.result, check.rows_left, check.rows_right) == ("pass", 1, 1)
+    # a period with no rows at all is not "stale" either: the dataset as a whole is fresh
+    out = _run(tmp_fixture, db, domains=["payroll"], period=resolve_period("2026-07", TODAY))
+    assert _checks(repo, out.run_id)["pay_jrnl_totals"].result == "pass"
+
+
+def test_executor_rejects_snapshot_period(staging, tmp_fixture):
+    with pytest.raises(ValueError, match="SNAPSHOT"):
+        _run(tmp_fixture, staging, period=resolve_period("SNAPSHOT", TODAY))
+    assert _count(staging, "run") == 0
 
 
 def test_lock_held_elsewhere_refuses_run(staging, dsn, tmp_fixture):
@@ -259,6 +276,47 @@ def test_lock_held_elsewhere_refuses_run(staging, dsn, tmp_fixture):
     assert out.messages == ["run already in progress for recon:payroll:2026-09"]
     assert _count(staging, "run") == 0 and _count(staging, "[rule]") == 0
     assert _run(tmp_fixture, staging).exit_code == 0
+
+
+def test_snapshot_lock_held_elsewhere_refuses_snapshot_rules_only(staging, dsn, tmp_fixture):
+    other = Database(dsn)
+    try:
+        with other.applock("recon:employees:SNAPSHOT"):
+            refused = _run(tmp_fixture, staging, rule_id="emp_master_match")
+            periodic = _run(tmp_fixture, staging, domains=["payroll"])  # no snapshot rules: unaffected
+    finally:
+        other.close()
+    assert (refused.run_id, refused.exit_code) == (None, 2)
+    assert refused.messages == ["run already in progress for recon:employees:SNAPSHOT"]
+    assert periodic.exit_code == 0
+    assert [r["domain"] for r in staging.query("SELECT domain FROM recon.run")] == ["payroll"]
+
+
+def test_failure_after_check_written_leaves_only_the_error_check(staging, repo, tmp_fixture, monkeypatch):
+    db = staging
+    original = SqlRepository.apply_engine_changes
+
+    def failing(self, changes, run_id):
+        if any(c.rule_id == "pay_jrnl_totals" for c in changes):
+            raise RuntimeError("injected failure")
+        return original(self, changes, run_id)
+
+    monkeypatch.setattr(SqlRepository, "apply_engine_changes", failing)
+    db.execute("UPDATE stg_gp.GL20000 SET DEBITAMT = 1")  # total_mismatch rows -> changes to apply
+    db.execute("UPDATE stg_gp.UPR00100 SET SALARY = 1 WHERE EMPLOYID = '000002'")
+    out = _run(tmp_fixture, db)
+    assert (out.status, out.exit_code) == ("partial", 2)
+    rows = db.query("SELECT result, error_message FROM recon.run_check WHERE rule_id = 'pay_jrnl_totals'")
+    assert rows == [{"result": "error", "error_message": "injected failure"}]
+    assert _count(db, "total_result") == 0
+    assert db.scalar("SELECT COUNT(*) FROM recon.[break] WHERE rule_id = 'pay_jrnl_totals'") == 0
+    # the other rules ran and merged normally
+    checks = _checks(repo, out.run_id)
+    assert {k: c.result for k, c in checks.items()} == {
+        "emp_cost_center_map": "pass", "emp_master_match": "fail", "gp_emp_quality": "pass",
+        "pay_jrnl_totals": "error",
+    }
+    assert _count(db, "[break]") == 1 and _count(db, "break_occurrence") == 1
 
 
 def test_orphaned_running_run_is_failed(staging, repo, tmp_fixture):
@@ -310,21 +368,44 @@ def _reset_recon_logger():
         h.close()
 
 
+def _last_run(db):
+    return db.query("SELECT TOP 1 run_id, domain, [trigger] FROM recon.run ORDER BY run_id DESC")[0]
+
+
 def test_cli_run(staging, dsn, tmp_fixture, monkeypatch, _reset_recon_logger):
     monkeypatch.setenv("RECON_DB", dsn)
     staging.execute("UPDATE stg_gp.UPR00100 SET SALARY = 1 WHERE EMPLOYID = '000002'")
-    res = CliRunner().invoke(app, ["run", "--domain", "employees", "--domain", "payroll", "--period", "2026-09",
+    res = CliRunner().invoke(app, ["run", "--domain", "employees", "--period", "2026-09",
                                    "--root", str(tmp_fixture), "--no-export"])
     assert res.exit_code == 1, res.output
     lines = res.output.splitlines()
     assert "emp_master_match: fail (1 breaks)" in lines
-    assert "pay_jrnl_totals: pass (0 breaks)" in lines
-    run_id = staging.scalar("SELECT MAX(run_id) FROM recon.run")
-    assert f"Run {run_id}: succeeded" in lines
-    assert staging.scalar("SELECT [trigger] FROM recon.run WHERE run_id = ?", run_id) == "manual"
+    assert "gp_emp_quality: pass (0 breaks)" in lines
+    run = _last_run(staging)
+    assert f"Run {run['run_id']}: succeeded" in lines
+    assert (run["domain"], run["trigger"]) == ("employees", "manual")
     assert (tmp_fixture / "logs" / "recon.log").is_file()
 
     res = CliRunner().invoke(app, ["run", "--rule", "pay_jrnl_totals", "--period", "2026-09",
                                    "--root", str(tmp_fixture), "--trigger", "scheduled"])
     assert res.exit_code == 0, res.output
-    assert staging.scalar("SELECT [trigger] FROM recon.run WHERE run_id = ?", run_id + 1) == "scheduled"
+    assert "pay_jrnl_totals: pass (0 breaks)" in res.output.splitlines()
+    run = _last_run(staging)
+    assert (run["domain"], run["trigger"]) == ("payroll", "scheduled")
+
+    res = CliRunner().invoke(app, ["run", "--all", "--period", "2026-09", "--root", str(tmp_fixture)])
+    assert res.exit_code == 1, res.output
+    assert _last_run(staging)["domain"] is None  # NULL only for --all
+
+
+def test_cli_run_reports_failed_check_read(staging, dsn, tmp_fixture, monkeypatch, _reset_recon_logger):
+    def broken(self, run_id):
+        raise pyodbc.OperationalError("08S01", "connection lost")
+
+    monkeypatch.setenv("RECON_DB", dsn)
+    monkeypatch.setattr(SqlRepository, "checks_for_run", broken)
+    res = CliRunner().invoke(app, ["run", "--domain", "payroll", "--period", "2026-09", "--root", str(tmp_fixture)])
+    assert res.exit_code == 2, res.output
+    run_id = _last_run(staging)["run_id"]
+    assert f"Run {run_id}: succeeded (cannot read its checks:" in res.output
+    assert res.exception is None or isinstance(res.exception, SystemExit)
