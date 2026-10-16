@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable
+from contextlib import ExitStack
 from datetime import UTC, date, datetime
 from enum import Enum
 from pathlib import Path
@@ -313,8 +314,14 @@ def signoff_command(
     project, label, database = _signoff_context(domain, period, root)
     try:
         try:
-            row = sign_off(project, SqlRepository(database), domain=domain, period_label=label,
-                           comment=comment, now=datetime.now(UTC))
+            with ExitStack() as locks:  # same resources as `recon run`, so a run cannot interleave
+                for resource in sorted({f"recon:{domain}:{label}", f"recon:{domain}:{SNAPSHOT}"}):
+                    locks.enter_context(database.applock(resource))
+                row = sign_off(project, SqlRepository(database), domain=domain, period_label=label,
+                               comment=comment, now=datetime.now(UTC))
+        except LockBusy as exc:
+            typer.echo(f"run already in progress for {exc.resource}")
+            raise typer.Exit(2) from exc
         except SignoffRefused as exc:
             for reason in exc.reasons:
                 typer.echo(reason)

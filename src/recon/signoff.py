@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -72,23 +73,41 @@ def sign_off(project: Project, repo: Repository, *, domain: str, period_label: s
     assert run is not None
 
     accepted = len(repo.breaks_for(domain, period_label, statuses={"accepted"}))
-    path = _evidence_path(project, domain, period_label, now)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    final = _evidence_path(project, domain, period_label, now).resolve()
+    final.parent.mkdir(parents=True, exist_ok=True)
+    # Export to a private temp file, then hard-link it into place: the link fails if the final name exists,
+    # so a concurrent or earlier sign-off's frozen evidence is never overwritten (or cleaned up by us).
+    tmp: Path | None = final.with_name(f".{final.name}.{uuid.uuid4().hex}.tmp")
+    linked = False
     try:
         export_workbook(repo, domain=domain, period_label=period_label, run_id=run.run_id,
-                        out_path=path, evidence=True)
-        os.chmod(path, stat.S_IREAD)
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                        out_path=tmp, evidence=True)
+        try:
+            os.link(tmp, final)
+        except FileExistsError:
+            raise SignoffRefused([f"evidence file already exists: {final}; retry"]) from None
+        linked = True
+        tmp.unlink()
+        tmp = None
+        os.chmod(final, stat.S_IREAD)
+        digest = hashlib.sha256(final.read_bytes()).hexdigest()
+        # state may have changed while the workbook was being written
+        latest = repo.latest_run(domain, period_label)
+        still_active = repo.breaks_for(domain, period_label, statuses={"open", "investigating"})
+        if latest is None or latest.run_id != run.run_id or still_active:
+            raise SignoffRefused(["state changed during sign-off; retry"])
         repo.insert_signoff(SignoffRow(
             signoff_id=None, domain=domain, period_label=period_label, run_id=run.run_id, signed_by=user,
             signed_at=now, comment=comment, open_break_count=0, accepted_break_count=accepted,
-            evidence_path=str(path), evidence_sha256=digest, status="signed",
+            evidence_path=str(final), evidence_sha256=digest, status="signed",
         ))
     except BaseException:
-        # no sign-off row exists, so the frozen file must not outlive the failure
-        if path.exists():
-            os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
-            path.unlink()
+        # delete only files this call created
+        if tmp is not None and tmp.exists():
+            tmp.unlink()
+        if linked and final.exists():
+            os.chmod(final, stat.S_IWRITE | stat.S_IREAD)
+            final.unlink()
         raise
     stamped = repo.active_signoff(domain, period_label)
     assert stamped is not None
@@ -109,4 +128,4 @@ def revoke(project: Project, repo: Repository, *, domain: str, period_label: str
     if reasons:
         raise SignoffRefused(reasons)
     assert active is not None and active.signoff_id is not None
-    repo.revoke_signoff(active.signoff_id, reason)
+    repo.revoke_signoff(active.signoff_id, reason.strip())

@@ -11,6 +11,7 @@ import yaml
 from typer.testing import CliRunner
 
 from recon.cli import app
+from recon.db import Database
 from recon.model import UserEdit
 from recon.repository import SqlRepository
 
@@ -66,3 +67,30 @@ def test_cli_signoff_round_trip(staging, dsn, tmp_fixture, monkeypatch, _reset_r
     assert db.scalar("SELECT status FROM recon.signoff WHERE signoff_id = ?", row["signoff_id"]) == "revoked"
     assert repo.active_signoff("employees", "2026-09") is None
     assert evidence.is_file()
+
+
+@pytest.mark.parametrize("resource", ["recon:employees:2026-09", "recon:employees:SNAPSHOT"])
+def test_cli_signoff_refused_while_a_run_holds_the_lock(staging, dsn, tmp_fixture, monkeypatch,  # noqa: F811
+                                                        _reset_recon_logger, resource):  # noqa: F811
+    db = staging
+    monkeypatch.setenv("RECON_DB", dsn)
+    (tmp_fixture / "config" / "signers.yaml").write_text(
+        yaml.safe_dump({"signers": {"employees": [db.current_user()]}}), encoding="utf-8")
+    db.execute("UPDATE stg_gp.UPR00100 SET SALARY = 1 WHERE EMPLOYID = '000002'")
+    runner = CliRunner()
+    root = ["--root", str(tmp_fixture)]
+    assert runner.invoke(app, ["run", "--domain", "employees", "--period", "2026-09", *root]).exit_code == 1
+    SqlRepository(db).apply_user_edits(
+        [UserEdit(b.break_id, b.version, "accepted", None, "known")
+         for b in SqlRepository(db).breaks_for("employees", "2026-09", statuses={"open", "investigating"})],
+        "accept.xlsx", "b" * 64, 0)
+    other = Database(dsn)
+    try:
+        with other.applock(resource):
+            res = runner.invoke(app, ["signoff", "--domain", "employees", "--period", "2026-09",
+                                      "--comment", "x", *root])
+    finally:
+        other.close()
+    assert res.exit_code == 2 and res.output.strip() == f"run already in progress for {resource}", res.output
+    assert db.scalar("SELECT COUNT(*) FROM recon.signoff") == 0
+    assert not (tmp_fixture / "evidence").exists()

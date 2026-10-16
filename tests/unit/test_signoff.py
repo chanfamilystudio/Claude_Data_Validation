@@ -1,8 +1,11 @@
+import contextlib
 import hashlib
 import itertools
+import os
 import stat
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from typer.testing import CliRunner
@@ -12,6 +15,7 @@ from recon import cli, signoff
 from recon.breaks import plan_merge
 from recon.cli import app
 from recon.config.loader import load_project
+from recon.db import LockBusy
 from recon.model import CheckRecord
 from recon.signoff import SignoffRefused, revoke, sign_off
 from repository_contract import HASH_A, add_rule, create_break, edit, observed, open_run
@@ -120,14 +124,19 @@ def test_signer_match_is_case_insensitive(project, repo):
 
 
 def test_all_reasons_collected_in_order(project, repo):
-    run = ready(repo, rules=["emp_master_match"], status="partial")
+    ready(repo)
+    do_sign(project, repo)  # reason 4 needs an active sign-off; then degrade everything else
+    run = open_run(repo, "employees", P)
+    repo.record_check(CheckRecord(run, "emp_master_match", HASH_A, "pass", 1, 1, 0, "SELECT 1", 5, None))
+    repo.close_run(run, "partial")
     create_break(repo, run, rule_id="emp_master_match")
     project.signers["employees"] = ["TEST\\other"]
-    assert refused(project, repo) == [
+    assert refused(project, repo, now=datetime(2026, 10, 3, tzinfo=UTC)) == [
         f"latest run {run} status is partial",
         f"latest run {run} did not execute rules: emp_cost_center_map, gp_emp_quality",
         "1 breaks are open or investigating",
         f"{USER} is not an authorized signer for employees",
+        "employees 2026-09 is already signed off",
     ]
 
 
@@ -145,8 +154,10 @@ def test_sign_off_writes_read_only_evidence_and_records_it(project, repo):
     row = do_sign(project, repo, comment="September done")
 
     path = Path(row.evidence_path)
+    assert path.is_absolute()
     assert path == (project.settings.evidence_dir / "employees" / P
-                    / "recon_evidence_employees_2026-09_20261002T140509Z.xlsx")
+                    / "recon_evidence_employees_2026-09_20261002T140509Z.xlsx").resolve()
+    assert [p.name for p in path.parent.iterdir()] == [path.name]  # no temp file left behind
     assert path.is_file()
     assert stat.S_IMODE(path.stat().st_mode) == stat.S_IREAD
     assert row.evidence_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
@@ -199,6 +210,13 @@ def test_revoke_without_signoff(project, repo):
                                  f"{USER} is not an authorized signer for employees"]
 
 
+def test_revoke_reason_is_stripped(project, repo):
+    ready(repo)
+    first = do_sign(project, repo)
+    revoke(project, repo, domain="employees", period_label=P, reason="  late adjustment \n")
+    assert repo.signoffs[first.signoff_id]["revoke_reason"] == "late adjustment"
+
+
 @pytest.mark.parametrize("reason", ["", "   "])
 def test_revoke_requires_a_reason(project, repo, reason):
     ready(repo)
@@ -233,15 +251,106 @@ def test_insert_failure_deletes_the_evidence_file(project, repo, monkeypatch):
     assert list(project.settings.evidence_dir.rglob("*.xlsx")) == []
 
 
+def _final_path(project):
+    return (project.settings.evidence_dir / "employees" / P
+            / "recon_evidence_employees_2026-09_20261002T140509Z.xlsx").resolve()
+
+
+def test_existing_evidence_file_is_never_overwritten(project, repo):
+    ready(repo)
+    final = _final_path(project)
+    final.parent.mkdir(parents=True)
+    final.write_bytes(b"frozen evidence")
+    os.chmod(final, stat.S_IREAD)
+    assert refused(project, repo) == [f"evidence file already exists: {final}; retry"]
+    assert final.read_bytes() == b"frozen evidence"
+    assert stat.S_IMODE(final.stat().st_mode) == stat.S_IREAD
+    assert [p.name for p in final.parent.iterdir()] == [final.name]  # our temp file is gone
+    assert repo.active_signoff("employees", P) is None
+
+
+def test_export_failure_leaves_no_files(project, repo, monkeypatch):
+    ready(repo)
+
+    def boom(repo_, *, out_path, **kw):
+        Path(out_path).write_bytes(b"partial")
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(signoff, "export_workbook", boom)
+    with pytest.raises(RuntimeError, match="disk full"):
+        do_sign(project, repo)
+    assert list(project.settings.evidence_dir.rglob("*")) == [
+        project.settings.evidence_dir / "employees", project.settings.evidence_dir / "employees" / P]
+    assert repo.active_signoff("employees", P) is None
+
+
+def test_insert_failure_deletes_only_its_own_file(project, repo, monkeypatch):
+    ready(repo)
+    do_sign(project, repo)  # an earlier sign-off's evidence (different second)
+    revoke(project, repo, domain="employees", period_label=P, reason="redo")
+    earlier = sorted(project.settings.evidence_dir.rglob("*.xlsx"))
+    assert len(earlier) == 1
+
+    def boom(row):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(repo, "insert_signoff", boom)
+    with pytest.raises(RuntimeError, match="db down"):
+        do_sign(project, repo, now=datetime(2026, 10, 5, tzinfo=UTC))
+    assert sorted(project.settings.evidence_dir.rglob("*.xlsx")) == earlier
+    assert [p for p in earlier[0].parent.iterdir()] == earlier
+
+
+def test_state_change_during_export_refuses_and_cleans_up(project, repo, monkeypatch):
+    run = ready(repo)
+    real = signoff.export_workbook
+
+    def export_then_new_break(*a, **kw):
+        out = real(*a, **kw)
+        create_break(repo, run, rule_id="emp_master_match")  # someone's run lands mid sign-off
+        return out
+
+    monkeypatch.setattr(signoff, "export_workbook", export_then_new_break)
+    assert refused(project, repo) == ["state changed during sign-off; retry"]
+    assert list(project.settings.evidence_dir.rglob("*.xlsx")) == []
+    assert list(project.settings.evidence_dir.rglob("*.tmp")) == []
+    assert repo.active_signoff("employees", P) is None and not repo.signoffs
+
+
+def test_new_run_during_export_refuses(project, repo, monkeypatch):
+    ready(repo)
+    real = signoff.export_workbook
+
+    def export_then_new_run(*a, **kw):
+        out = real(*a, **kw)
+        open_run(repo, "employees", P)
+        return out
+
+    monkeypatch.setattr(signoff, "export_workbook", export_then_new_run)
+    assert refused(project, repo) == ["state changed during sign-off; retry"]
+    assert list(project.settings.evidence_dir.rglob("*.xlsx")) == [] and not repo.signoffs
+
+
 # -- CLI ------------------------------------------------------------------------------------
 class _FakeDb:
+    locks: ClassVar[list[str]] = []
+    busy: ClassVar[str | None] = None
+
     def close(self):
         pass
+
+    @contextlib.contextmanager
+    def applock(self, resource):
+        if resource == self.busy:
+            raise LockBusy(resource)
+        self.locks.append(resource)
+        yield
 
 
 @pytest.fixture
 def cli_env(tmp_fixture, repo, monkeypatch):
     monkeypatch.setenv("RECON_DB", "Driver={x};Server=none")
+    _FakeDb.locks, _FakeDb.busy = [], None
     monkeypatch.setattr(cli, "Database", lambda conn: _FakeDb())
     monkeypatch.setattr(cli, "SqlRepository", lambda db: repo)
     return tmp_fixture
@@ -262,6 +371,27 @@ def test_cli_signoff_and_revoke_route_correctly(cli_env, repo):
     assert res.exit_code == 0, res.output
     assert res.output.strip() == f"Revoked employees {P}"
     assert repo.active_signoff("employees", P) is None
+
+
+def test_cli_signoff_holds_run_locks_in_sorted_order(cli_env, repo):
+    ready(repo)
+    runner = CliRunner()
+    args = ["--domain", "employees", "--period", P, "--root", str(cli_env)]
+    assert runner.invoke(app, ["signoff", *args, "--comment", "x"]).exit_code == 0
+    assert _FakeDb.locks == ["recon:employees:2026-09", "recon:employees:SNAPSHOT"]
+    _FakeDb.locks.clear()
+    assert runner.invoke(app, ["signoff", "revoke", *args, "--reason", "x"]).exit_code == 0
+    assert _FakeDb.locks == []  # revoke takes no locks
+
+
+@pytest.mark.parametrize("busy", ["recon:employees:2026-09", "recon:employees:SNAPSHOT"])
+def test_cli_signoff_lock_busy_exits_2(cli_env, repo, busy):
+    ready(repo)
+    _FakeDb.busy = busy
+    res = CliRunner().invoke(app, ["signoff", "--domain", "employees", "--period", P, "--comment", "x",
+                                   "--root", str(cli_env)])
+    assert res.exit_code == 2 and res.output.strip() == f"run already in progress for {busy}"
+    assert not repo.signoffs
 
 
 def test_cli_signoff_refusal_prints_each_reason(cli_env, repo):
