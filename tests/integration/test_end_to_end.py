@@ -43,12 +43,12 @@ PLANTED = {
     ("emp_master_match", "quality_violation", "000010", "__key__"),  # duplicate key
     ("emp_cost_center_map", "mapping_missing", "CC9", "cost_center"),
     ("emp_cost_center_map", "mapping_mismatch", "CC3", "cost_center"),
-    ("gp_emp_quality", "quality_violation", "ABC123", "DEPRTMNT"),  # not_null
-    ("gp_emp_quality", "quality_violation", "ABC123", "EMPLOYID"),  # like
+    ("gp_emp_quality", "quality_violation", "ABC123", "not_null:DEPRTMNT"),
+    ("gp_emp_quality", "quality_violation", "ABC123", "like:EMPLOYID"),
     ("gp_emp_quality", "quality_violation", "000010", "unique:EMPLOYID"),
-    ("gp_emp_quality", "quality_violation", "000011", "INACTIVE"),  # accepted_values
+    ("gp_emp_quality", "quality_violation", "000011", "accepted_values:INACTIVE"),
     ("gp_emp_quality", "quality_violation", "000011", "future_hire_dates"),  # custom_sql
-    ("gp_emp_quality", "quality_violation", "000009", "DEPRTMNT"),  # references
+    ("gp_emp_quality", "quality_violation", "000009", "references:DEPRTMNT"),
     # control-total groups are keyed by the GP account index (101 = A6100, 102 = A6200)
     ("pay_jrnl_totals", "total_mismatch", "101", "net_amount"),
     ("pay_jrnl_totals", "total_mismatch", "102", "net_amount"),

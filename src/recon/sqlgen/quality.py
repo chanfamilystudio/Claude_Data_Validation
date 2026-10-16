@@ -3,8 +3,8 @@
 ``diff_sql`` is a ``UNION ALL`` of one ``SELECT`` per assertion, each returning the six diff columns
 with ``break_type = 'quality_violation'`` and ``business_key`` built from the rule's ``key`` columns
 (except ``unique``, which reports the duplicated value). Values are compared as normalized strings
-(trim, upper-case), so a blank counts as null. ``field_name`` is the column, ``unique:<columns>``, or
-the ``custom_sql`` name. Nulls: only ``not_null`` reports them; ``unique``, ``accepted_values``,
+(trim, upper-case), so a blank counts as null. ``field_name`` is ``<assertion>:<column>`` (e.g.
+``not_null:DEPRTMNT``, ``references:DEPRTMNT``), ``unique:<columns>``, or the ``custom_sql`` name. Nulls: only ``not_null`` reports them; ``unique``, ``accepted_values``,
 ``references`` and ``like`` look at non-null values only.
 
 ``like`` matches the trimmed value (CHAR columns keep their padding) under the BIN2 collation, so the
@@ -89,7 +89,7 @@ class _Builder:
         return norm_string(column_ref("s", column), _NORMALIZE)
 
     def not_null(self, a: NotNull) -> str:
-        values = ",\n".join(f"(N'{c}', {self._value(c)})" for c in a.columns)
+        values = ",\n".join(f"({_nlit('not_null:' + c)}, {self._value(c)})" for c in a.columns)
         body = (
             f"FROM {self.source} AS s\n"
             f"CROSS APPLY (VALUES\n{sub(values)}\n) AS v (field_name, value)\n"
@@ -129,7 +129,8 @@ class _Builder:
             f"{TAB}{TAB}WHERE a.value = {value}\n"
             f"{TAB})"
         )
-        return _branch(self.key, _nlit(a.column), text_of(column_ref("s", a.column)), _NULL, body)
+        return _branch(self.key, _nlit("accepted_values:" + a.column), text_of(column_ref("s", a.column)), _NULL,
+                       body)
 
     def references(self, a: References) -> str:
         ref_source = source_for(self.ctx, a.dataset)
@@ -142,7 +143,7 @@ class _Builder:
             f"{TAB}{TAB}SELECT 1 FROM {ref_source} AS r WHERE {ref_value} = {value}\n"
             f"{TAB})"
         )
-        return _branch(self.key, _nlit(a.column), text_of(column_ref("s", a.column)), _NULL, body)
+        return _branch(self.key, _nlit("references:" + a.column), text_of(column_ref("s", a.column)), _NULL, body)
 
     def like(self, a: Like) -> str:
         raw = text_of(column_ref("s", a.column))
@@ -152,7 +153,7 @@ class _Builder:
             f"WHERE {self._value(a.column)} IS NOT NULL\n"
             f"{TAB}AND {trimmed} NOT LIKE {_nlit(a.pattern)} COLLATE {COMPARE_COLLATION}"
         )
-        return _branch(self.key, _nlit(a.column), raw, _NULL, body)
+        return _branch(self.key, _nlit("like:" + a.column), raw, _NULL, body)
 
     def custom_sql(self, a: CustomSql) -> str:
         sql = _DATASET_PLACEHOLDER.sub(

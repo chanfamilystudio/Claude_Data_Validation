@@ -249,17 +249,17 @@ def test_every_assertion_type_reports_its_planted_violation(emp_tables):
     assert g.checks_sql is None
     assert _load(db, g) == {
         # not_null: blank department; the null key and the blank key both show as the null marker
-        ("000003", "quality_violation", "DEPRTMNT", None, None, None),
-        ("∅", "quality_violation", "EMPLOYID", None, None, None),
+        ("000003", "quality_violation", "not_null:DEPRTMNT", None, None, None),
+        ("∅", "quality_violation", "not_null:EMPLOYID", None, None, None),
         # unique: the duplicated value with its count
         ("000004", "quality_violation", "unique:EMPLOYID", "2", None, None),
         # accepted_values: actual value
-        ("000005", "quality_violation", "INACTIVE", "5", None, None),
-        ("000009", "quality_violation", "STATUS", "x", None, None),
+        ("000005", "quality_violation", "accepted_values:INACTIVE", "5", None, None),
+        ("000009", "quality_violation", "accepted_values:STATUS", "x", None, None),
         # references: department without a match (only D9; null and blank are not checked)
-        ("000006", "quality_violation", "DEPRTMNT", "D9", None, None),
+        ("000006", "quality_violation", "references:DEPRTMNT", "D9", None, None),
         # like: the key is normalized (upper-case), the value is shown as stored
-        ("00007X", "quality_violation", "EMPLOYID", "00007x", None, None),
+        ("00007X", "quality_violation", "like:EMPLOYID", "00007x", None, None),
         # custom_sql
         ("000008", "quality_violation", "future_hire_dates", None, None, None),
     }
@@ -304,9 +304,9 @@ def test_quality_key_is_composite_and_escaped(schemas):
     pairs = _ds("pairs", "t_mq_gp.pairs")
     rule = _quality_rule([{"not_null": ["B"]}, {"like": {"column": "A", "pattern": "ok"}}], dataset="pairs", key=("A", "B"))
     assert _load(db, generate(rule, _ctx(pairs))) == {
-        ("A\\|B|∅", "quality_violation", "B", None, None, None),
-        ("A\\|B|∅", "quality_violation", "A", "A|B", None, None),
-        ("A|B\\|C", "quality_violation", "A", "A", None, None),
+        ("A\\|B|∅", "quality_violation", "not_null:B", None, None, None),
+        ("A\\|B|∅", "quality_violation", "like:A", "A|B", None, None),
+        ("A|B\\|C", "quality_violation", "like:A", "A", None, None),
     }
 
 
@@ -379,11 +379,11 @@ def test_rows_with_the_same_break_key_collapse_to_one_row(emp_tables):
     db.execute(PARAM_HEADER + f"INSERT INTO #diffs ({DIFF_COLUMNS}) SELECT * FROM (\n{g.diff_sql}\n) d", *PARAMS)
     rows = db.query("SELECT business_key, field_name, left_value FROM #diffs")
     assert sorted((r["business_key"], r["field_name"]) for r in rows) == [
-        ("K1", "INACTIVE"),
+        ("K1", "accepted_values:INACTIVE"),
         ("K1", "future_hire_dates"),
-        ("∅", "EMPLOYID"),
+        ("∅", "not_null:EMPLOYID"),
     ]
-    (inactive,) = (r for r in rows if r["field_name"] == "INACTIVE")
+    (inactive,) = (r for r in rows if r["field_name"] == "accepted_values:INACTIVE")
     assert inactive["left_value"] in ("5", "7")  # one of the colliding values is kept
 
 
@@ -396,8 +396,8 @@ def test_like_ignores_char_padding_but_still_flags_violations(schemas):
     rule = _quality_rule([{"like": {"column": "EMPLOYID", "pattern": "[0-9][0-9][0-9][0-9][0-9][0-9]"}}])
     got = _load(db, generate(rule, _ctx(EMP)))
     assert got == {
-        ("00003X", "quality_violation", "EMPLOYID", "00003x" + " " * 9, None, None),
-        ("ABC", "quality_violation", "EMPLOYID", "abc" + " " * 12, None, None),
+        ("00003X", "quality_violation", "like:EMPLOYID", "00003x" + " " * 9, None, None),
+        ("ABC", "quality_violation", "like:EMPLOYID", "abc" + " " * 12, None, None),
     }
 
 
@@ -407,4 +407,4 @@ def test_like_is_case_sensitive_as_written(schemas):
     for value in ("abc", "ABC"):
         db.execute("INSERT INTO t_mq_gp.emp VALUES (?)", value)
     rule = _quality_rule([{"like": {"column": "EMPLOYID", "pattern": "[a-z][a-z][a-z]"}}])
-    assert _load(db, generate(rule, _ctx(EMP))) == {("ABC", "quality_violation", "EMPLOYID", "ABC", None, None)}
+    assert _load(db, generate(rule, _ctx(EMP))) == {("ABC", "quality_violation", "like:EMPLOYID", "ABC", None, None)}

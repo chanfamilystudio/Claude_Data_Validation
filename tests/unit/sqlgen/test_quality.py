@@ -61,8 +61,12 @@ def test_counts_sql(fixture_project):
 
 def test_field_names(fixture_project):
     diff = generate(fixture_project.rules["gp_emp_quality"], ctx_for(fixture_project)).diff_sql
-    for expected in ("N'unique:EMPLOYID'", "N'INACTIVE'", "N'DEPRTMNT'", "N'EMPLOYID'", "N'future_hire_dates'"):
+    for expected in ("N'not_null:EMPLOYID'", "N'not_null:DEPRTMNT'", "N'unique:EMPLOYID'",
+                     "N'accepted_values:INACTIVE'", "N'references:DEPRTMNT'", "N'like:EMPLOYID'",
+                     "N'future_hire_dates'"):
         assert expected in diff
+    for bare in ("N'INACTIVE'", "N'DEPRTMNT'", "N'EMPLOYID'"):
+        assert bare not in diff
 
 
 def test_unique_composite_field_name_and_key(fixture_project):

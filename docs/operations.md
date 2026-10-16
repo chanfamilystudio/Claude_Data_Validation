@@ -261,6 +261,9 @@ with the exact generated SQL, `recon.audit_log`), not in the log file.
   `E001` are the same key.
 - **PII columns** (`pii: true`) are compared by SHA-256 hash and stored, exported and logged only as `***`. They
   cannot be used as keys and cannot have a tolerance.
+- **Quality break `field`** is `<assertion>:<column>` for `not_null`, `accepted_values`, `references` and `like`
+  (e.g. `not_null:DEPRTMNT`, `references:DEPRTMNT`), `unique:<col>,<col>` for `unique`, and the assertion's `name`
+  for `custom_sql`, so two assertions on the same column give separate breaks.
 - **Duplicate keys** in a `record_match` dataset yield one `quality_violation` for the key and no other break for it.
 - **Mappings:** an ambiguous mapping (two valid rows for one value on the as-of date) is an error for every rule
   that uses it. Effective dating uses the end of the run's period for periodic rules and today for snapshot rules.

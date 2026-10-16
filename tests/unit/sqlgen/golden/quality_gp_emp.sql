@@ -22,8 +22,8 @@ FROM (
         CAST(NULL AS DECIMAL(38,6)) AS diff
     FROM (SELECT * FROM [stg_gp].[UPR00100]) AS s
     CROSS APPLY (VALUES
-        (N'EMPLOYID', UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[EMPLOYID], 126) COLLATE Latin1_General_100_BIN2)), N''))),
-        (N'DEPRTMNT', UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[DEPRTMNT], 126) COLLATE Latin1_General_100_BIN2)), N'')))
+        (N'not_null:EMPLOYID', UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[EMPLOYID], 126) COLLATE Latin1_General_100_BIN2)), N''))),
+        (N'not_null:DEPRTMNT', UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[DEPRTMNT], 126) COLLATE Latin1_General_100_BIN2)), N'')))
     ) AS v (field_name, value)
     WHERE v.value IS NULL
     UNION ALL
@@ -48,7 +48,7 @@ FROM (
     SELECT
         REPLACE(REPLACE(ISNULL(UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[EMPLOYID], 126) COLLATE Latin1_General_100_BIN2)), N'')), N'∅'), '\', N'\\'), '|', N'\|') AS business_key,
         'quality_violation' AS break_type,
-        N'INACTIVE' AS field_name,
+        N'accepted_values:INACTIVE' AS field_name,
         CONVERT(NVARCHAR(4000), s.[INACTIVE], 126) AS left_value,
         CAST(NULL AS NVARCHAR(4000)) AS right_value,
         CAST(NULL AS DECIMAL(38,6)) AS diff
@@ -66,7 +66,7 @@ FROM (
     SELECT
         REPLACE(REPLACE(ISNULL(UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[EMPLOYID], 126) COLLATE Latin1_General_100_BIN2)), N'')), N'∅'), '\', N'\\'), '|', N'\|') AS business_key,
         'quality_violation' AS break_type,
-        N'DEPRTMNT' AS field_name,
+        N'references:DEPRTMNT' AS field_name,
         CONVERT(NVARCHAR(4000), s.[DEPRTMNT], 126) AS left_value,
         CAST(NULL AS NVARCHAR(4000)) AS right_value,
         CAST(NULL AS DECIMAL(38,6)) AS diff
@@ -80,7 +80,7 @@ FROM (
     SELECT
         REPLACE(REPLACE(ISNULL(UPPER(NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(4000), s.[EMPLOYID], 126) COLLATE Latin1_General_100_BIN2)), N'')), N'∅'), '\', N'\\'), '|', N'\|') AS business_key,
         'quality_violation' AS break_type,
-        N'EMPLOYID' AS field_name,
+        N'like:EMPLOYID' AS field_name,
         CONVERT(NVARCHAR(4000), s.[EMPLOYID], 126) AS left_value,
         CAST(NULL AS NVARCHAR(4000)) AS right_value,
         CAST(NULL AS DECIMAL(38,6)) AS diff
