@@ -45,7 +45,9 @@ class Repository(Protocol):
 
     def insert_totals(self, run_check_id: int, rows: list[TotalRow]) -> None: ...
 
-    def latest_run(self, domain: str, period_label: str) -> RunRow | None: ...
+    def latest_run(self, domain: str | None, period_label: str) -> RunRow | None: ...
+
+    def get_run(self, run_id: int) -> RunRow | None: ...
 
     def checks_for_run(self, run_id: int) -> list[CheckRecord]: ...
 
@@ -202,12 +204,25 @@ class SqlRepository:
             period_label, *domains,
         )
 
-    def latest_run(self, domain: str, period_label: str) -> RunRow | None:
-        rows = self._db.query(
-            f"SELECT TOP 1 {_RUN_COLS} FROM recon.run"
-            " WHERE period_label = ? AND (domain = ? OR domain IS NULL) ORDER BY run_id DESC",
-            period_label, domain,
-        )
+    def latest_run(self, domain: str | None, period_label: str) -> RunRow | None:
+        """Latest run covering ``domain`` (its own or an all-domain run); ``None`` = latest all-domain run."""
+        if domain is None:
+            rows = self._db.query(
+                f"SELECT TOP 1 {_RUN_COLS} FROM recon.run WHERE period_label = ? AND domain IS NULL"
+                " ORDER BY run_id DESC", period_label)
+        else:
+            rows = self._db.query(
+                f"SELECT TOP 1 {_RUN_COLS} FROM recon.run"
+                " WHERE period_label = ? AND (domain = ? OR domain IS NULL) ORDER BY run_id DESC",
+                period_label, domain,
+            )
+        return self._run_row(rows)
+
+    def get_run(self, run_id: int) -> RunRow | None:
+        return self._run_row(self._db.query(f"SELECT {_RUN_COLS} FROM recon.run WHERE run_id = ?", run_id))
+
+    @staticmethod
+    def _run_row(rows) -> RunRow | None:
         if not rows:
             return None
         r = rows[0]

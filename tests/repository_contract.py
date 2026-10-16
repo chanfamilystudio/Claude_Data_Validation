@@ -144,6 +144,24 @@ class RepositoryContract:
 
     def test_latest_run_none_when_empty(self, repo):
         assert repo.latest_run("employees", P) is None
+        assert repo.latest_run(None, P) is None
+
+    def test_latest_run_without_domain_is_the_latest_all_domain_run(self, repo):
+        run1 = open_run(repo, None)
+        open_run(repo, "employees")
+        assert repo.latest_run(None, P).run_id == run1
+        run3 = open_run(repo, None)
+        assert repo.latest_run(None, P).run_id == run3
+        assert repo.latest_run(None, "2026-08") is None
+
+    def test_get_run(self, repo):
+        run1 = open_run(repo, "employees")
+        run2 = open_run(repo, None, "2026-08")
+        row = repo.get_run(run1)
+        assert (row.run_id, row.domain, row.period_label, row.status) == (run1, "employees", P, "running")
+        assert row.run_by == repo.current_user()
+        assert repo.get_run(run2).domain is None
+        assert repo.get_run(run2 + 100) is None
 
     def test_fail_orphan_runs_only_touches_matching_running_runs(self, repo):
         a = open_run(repo, "employees")

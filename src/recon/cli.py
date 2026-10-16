@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
+from collections.abc import Callable
 from datetime import date
 from enum import Enum
 from pathlib import Path
@@ -13,11 +15,12 @@ import typer
 
 from recon.config.loader import ConfigError, load_project
 from recon.db import Database, LockBusy, connection_string
+from recon.excel.export import export_path, export_workbook
 from recon.executor import execute_run
 from recon.logging_setup import configure_logging
 from recon.migrations import apply_migrations
 from recon.periods import SNAPSHOT, resolve_period
-from recon.repository import SqlRepository
+from recon.repository import Repository, SqlRepository
 
 app = typer.Typer(no_args_is_help=True, help="Workday to Great Plains reconciliation engine.")
 rules_app = typer.Typer(no_args_is_help=True, help="Work with reconciliation rules.")
@@ -68,6 +71,22 @@ def migrate(
     typer.echo("Applied: " + ", ".join(applied) if applied else "Up to date")
 
 
+def run_exporter(repo: Repository, export_dir: Path, domain: str | None,
+                 period_label: str) -> Callable[[int], Path | None]:
+    """Export callable for ``execute_run``: a failed export is a warning, never a different exit code."""
+
+    def export(run_id: int) -> Path | None:
+        try:
+            return export_workbook(repo, domain=domain, period_label=period_label, run_id=run_id,
+                                   out_path=export_path(export_dir, domain, period_label, run_id))
+        except Exception as exc:
+            logging.getLogger("recon").warning("export of run %s failed: %s", run_id, exc, exc_info=True)
+            typer.echo(f"Warning: workbook export failed: {exc}")
+            return None
+
+    return export
+
+
 class Trigger(str, Enum):
     manual = "manual"
     scheduled = "scheduled"
@@ -112,12 +131,15 @@ def run(
         raise typer.Exit(2) from exc
     try:
         repo = SqlRepository(database)
-        # The run workbook export is wired in by Task 11; until then no workbook is written and
-        # --no-export is accepted (and has nothing to switch off).
+        export = None
+        if not no_export:
+            export_domain = domain if domain is not None else (
+                project.rules[rule].domain if rule is not None and rule in project.rules else None)
+            export = run_exporter(repo, project.settings.export_dir, export_domain, run_period.label)
         try:
             outcome = execute_run(
                 project, database, repo, domains=[domain] if domain is not None else None, rule_id=rule,
-                period=run_period, trigger=trigger.value, export=None, today=today,
+                period=run_period, trigger=trigger.value, export=export, today=today,
             )
         except Exception as exc:  # exit 1 would read as "breaks found"
             typer.echo(f"Run failed: {exc}")
@@ -141,3 +163,56 @@ def run(
     finally:
         database.close()
     raise typer.Exit(outcome.exit_code)
+
+
+@app.command("export")
+def export(
+    period: Annotated[str, typer.Option("--period", help="YYYY-MM, current or previous.")],
+    domain: Annotated[str | None, typer.Option("--domain", help="Export this domain.")] = None,
+    all_: Annotated[bool, typer.Option("--all", help="Export every domain.")] = False,
+    run_id: Annotated[int | None, typer.Option("--run-id", help="Show this run (default: the latest).")] = None,
+    root: Annotated[Path, typer.Option("--root", help="Project root containing config/ and rules/.")] = Path("."),
+) -> None:
+    """Write the review workbook for a domain (or all domains) and period."""
+    if (domain is not None) == all_:
+        typer.echo("Specify exactly one of --domain or --all.")
+        raise typer.Exit(2)
+    if period.strip().upper() == SNAPSHOT:
+        typer.echo("--period must be YYYY-MM, current or previous (snapshot breaks are listed in every period)")
+        raise typer.Exit(2)
+    try:
+        label = resolve_period(period, date.today()).label
+    except ValueError as exc:
+        typer.echo(f"invalid period {period!r}: expected YYYY-MM, current or previous")
+        raise typer.Exit(2) from exc
+    try:
+        project = load_project(root)
+        conn_str = connection_string(root, os.environ)
+    except ConfigError as exc:
+        for issue in exc.issues:
+            typer.echo(issue)
+        raise typer.Exit(2) from exc
+    if domain is not None and domain not in {r.domain for r in project.rules.values()}:
+        typer.echo(f"unknown domain {domain!r}")
+        raise typer.Exit(2)
+    try:
+        database = Database(conn_str)
+    except pyodbc.Error as exc:
+        typer.echo(f"Cannot connect to the database: {exc}")
+        raise typer.Exit(2) from exc
+    try:
+        repo = SqlRepository(database)
+        try:
+            if run_id is not None:
+                run_row = repo.get_run(run_id)
+                if run_row is None or run_row.period_label != label:
+                    typer.echo(f"run {run_id} not found for period {label}")
+                    raise typer.Exit(2)
+            path = export_workbook(repo, domain=domain, period_label=label, run_id=run_id,
+                                   out_path=export_path(project.settings.export_dir, domain, label, run_id))
+        except (pyodbc.Error, OSError) as exc:
+            typer.echo(f"Export failed: {exc}")
+            raise typer.Exit(2) from exc
+    finally:
+        database.close()
+    typer.echo(str(path))

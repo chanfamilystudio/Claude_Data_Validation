@@ -409,3 +409,77 @@ def test_cli_run_reports_failed_check_read(staging, dsn, tmp_fixture, monkeypatc
     run_id = _last_run(staging)["run_id"]
     assert f"Run {run_id}: succeeded (cannot read its checks:" in res.output
     assert res.exception is None or isinstance(res.exception, SystemExit)
+
+
+# --------------------------------------------------------------------------- Excel export
+
+
+def _breaks_sheet(path):
+    from openpyxl import load_workbook
+
+    ws = load_workbook(path)["Breaks"]
+    header = [c.value for c in ws[1]]
+    return [dict(zip(header, [c.value for c in row], strict=True)) for row in ws.iter_rows(min_row=2)]
+
+
+def test_cli_run_writes_workbook_and_export_command(staging, dsn, tmp_fixture, monkeypatch, _reset_recon_logger):
+    monkeypatch.setenv("RECON_DB", dsn)
+    staging.execute("UPDATE stg_gp.UPR00100 SET SALARY = 1 WHERE EMPLOYID = '000002'")
+    res = CliRunner().invoke(app, ["run", "--domain", "employees", "--period", "2026-09",
+                                   "--root", str(tmp_fixture)])
+    assert res.exit_code == 1, res.output
+    run_id = _last_run(staging)["run_id"]
+    book = tmp_fixture / "exports" / f"recon_employees_2026-09_{run_id}.xlsx"
+    assert book.is_file() and f"Workbook: {book}" in res.output
+    rows = _breaks_sheet(book)
+    assert [(r["rule_id"], r["business_key"], r["break_type"], r["Status"], r["period"]) for r in rows] == [
+        ("emp_master_match", "000002", "value_mismatch", "open", "SNAPSHOT")]  # snapshot rule
+    assert rows[0]["domain"] == "employees" and rows[0]["first_seen_run"] == run_id
+
+    # the data is fixed: the next run auto-clears the break, the workbook of that run still lists it
+    staging.execute("UPDATE stg_gp.UPR00100 SET SALARY = 60000 WHERE EMPLOYID = '000002'")
+    res = CliRunner().invoke(app, ["run", "--all", "--period", "2026-09", "--root", str(tmp_fixture)])
+    assert res.exit_code == 0, res.output
+    run2 = _last_run(staging)["run_id"]
+    all_book = tmp_fixture / "exports" / f"recon_all_2026-09_{run2}.xlsx"
+    assert all_book.is_file()
+    assert [(r["business_key"], r["Status"]) for r in _breaks_sheet(all_book)] == [("000002", "resolved")]
+
+    res = CliRunner().invoke(app, ["export", "--domain", "employees", "--period", "2026-09",
+                                   "--run-id", str(run2), "--root", str(tmp_fixture)])
+    assert res.exit_code == 0, res.output
+    path = tmp_fixture / "exports" / f"recon_employees_2026-09_{run2}.xlsx"
+    assert res.output.strip() == str(path) and path.is_file()
+    assert [r["Status"] for r in _breaks_sheet(path)] == ["resolved"]
+
+    res = CliRunner().invoke(app, ["export", "--all", "--period", "2026-09", "--root", str(tmp_fixture)])
+    assert res.exit_code == 0, res.output
+    latest = tmp_fixture / "exports" / "recon_all_2026-09_latest.xlsx"
+    assert latest.is_file() and _breaks_sheet(latest) == []  # latest-mode: resolved breaks are not listed
+
+    res = CliRunner().invoke(app, ["export", "--domain", "employees", "--period", "2026-09",
+                                   "--run-id", "999999", "--root", str(tmp_fixture)])
+    assert res.exit_code == 2 and "run 999999 not found" in res.output
+
+
+def test_cli_run_export_failure_keeps_exit_code(staging, dsn, tmp_fixture, monkeypatch, _reset_recon_logger):
+    from recon import cli
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setenv("RECON_DB", dsn)
+    monkeypatch.setattr(cli, "export_workbook", boom)
+    staging.execute("UPDATE stg_gp.UPR00100 SET SALARY = 1 WHERE EMPLOYID = '000002'")
+    res = CliRunner().invoke(app, ["run", "--domain", "employees", "--period", "2026-09",
+                                   "--root", str(tmp_fixture)])
+    assert res.exit_code == 1, res.output
+    assert "Warning: workbook export failed: disk full" in res.output and "Workbook:" not in res.output
+
+
+def test_cli_run_no_export_writes_nothing(staging, dsn, tmp_fixture, monkeypatch, _reset_recon_logger):
+    monkeypatch.setenv("RECON_DB", dsn)
+    res = CliRunner().invoke(app, ["run", "--domain", "payroll", "--period", "2026-09",
+                                   "--root", str(tmp_fixture), "--no-export"])
+    assert res.exit_code == 0, res.output
+    assert not (tmp_fixture / "exports").exists()

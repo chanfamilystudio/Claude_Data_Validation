@@ -134,12 +134,18 @@ class InMemoryRepository:
                 count += 1
         return count
 
-    def latest_run(self, domain: str, period_label: str) -> RunRow | None:
+    def latest_run(self, domain: str | None, period_label: str) -> RunRow | None:
+        wanted = (None,) if domain is None else (domain, None)
         match = [r for r in self.runs.values()
-                 if r["period_label"] == period_label and r["domain"] in (domain, None)]
-        if not match:
-            return None
-        r = max(match, key=lambda x: x["run_id"])
+                 if r["period_label"] == period_label and r["domain"] in wanted]
+        return self._run_row(max(match, key=lambda x: x["run_id"])) if match else None
+
+    def get_run(self, run_id: int) -> RunRow | None:
+        r = self.runs.get(run_id)
+        return self._run_row(r) if r else None
+
+    @staticmethod
+    def _run_row(r: dict) -> RunRow:
         return RunRow(r["run_id"], r["trigger"], r["domain"], r["period_label"], r["status"],
                       r["run_by"], r["started_at"], r["finished_at"])
 
