@@ -24,6 +24,8 @@ _HEADER_FONT = Font(bold=True)
 _BAD_FILL = PatternFill("solid", fgColor="FFC7CE")
 _EDIT_FILL = PatternFill("solid", fgColor="FFF2CC")
 _COMMENT_LIMIT = 5
+CELL_MAX = 32_767  # Excel's limit on characters in one cell
+SQL_PART = 32_000  # generated SQL is split into parts of this many characters
 _WIDTHS = {"break_id": 10, "business_key": 22, "left": 22, "right": 22, "comment_history": 50,
            "Status": 14, "Owner": 18, "New comment": 40}
 
@@ -44,7 +46,27 @@ def _clean(value: Any) -> Any:
         return value
     if isinstance(value, datetime):
         return value.isoformat(sep=" ", timespec="seconds")
-    return ILLEGAL_CHARACTERS_RE.sub("", str(value))
+    return _fit(ILLEGAL_CHARACTERS_RE.sub("", str(value)))
+
+
+def _fit(text: str) -> str:
+    """``text`` cut to one Excel cell, ending in a visible `` …[truncated N chars]`` marker when cut."""
+    if len(text) <= CELL_MAX:
+        return text
+    dropped = len(text) - CELL_MAX
+    while True:  # the marker's own length depends on the number in it
+        marker = f" …[truncated {dropped} chars]"
+        keep = CELL_MAX - len(marker)
+        if len(text) - keep == dropped:
+            return text[:keep] + marker
+        dropped = len(text) - keep
+
+
+def _sql_parts(sql: str | None) -> list[str | None]:
+    """``sql`` in chunks of ``SQL_PART`` characters (concatenated in part order they give ``sql`` back)."""
+    if not sql:
+        return [sql]
+    return [sql[i:i + SQL_PART] for i in range(0, len(sql), SQL_PART)]
 
 
 def _put(ws: Worksheet, row: int, col: int, value: Any):
@@ -208,9 +230,10 @@ def export_workbook(repo: Repository, *, domain: str | None, period_label: str, 
                           a.source] for a in repo.audit_for(domain, period_label)])
         ws = wb.create_sheet(layout.SQL)
         _write_header(ws, layout.SQL_COLUMNS)
-        ws.column_dimensions["B"].width = 120
+        ws.column_dimensions["C"].width = 120
         if shown_run is not None:
-            _write_rows(ws, [[c.rule_id, c.generated_sql] for c in repo.checks_for_run(shown_run, domain)])
+            _write_rows(ws, [[c.rule_id, n, part] for c in repo.checks_for_run(shown_run, domain)
+                             for n, part in enumerate(_sql_parts(c.generated_sql), start=1)])
     _meta_sheet(wb.create_sheet(layout.META), shown_run, exported_by, breaks)
     for ws in wb:
         _protect(ws)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -317,7 +318,39 @@ def test_evidence_mode(repo, out):
     assert audit[0] == layout.AUDIT_COLUMNS
     assert len(audit) == 1 + len(repo.audit_for("employees", P)) and len(audit) > 3
     assert audit[1][:3] == ["break", str(a.break_id), "status"] and audit[1][7] == "engine"
-    assert _rows(wb["SQL"]) == [layout.SQL_COLUMNS, ["emp_name", "SELECT 'x'"]]
+    assert _rows(wb["SQL"]) == [layout.SQL_COLUMNS, ["emp_name", 1, "SELECT 'x'"]]
+
+
+def test_long_generated_sql_is_split_into_parts_that_round_trip(repo, out):
+    run = open_run(repo)
+    sql = "".join(f"SELECT {i:05d};\n" for i in range(3077))[:40_000]
+    assert len(sql) == 40_000
+    repo.record_check(_check(run, "emp_name", sql=sql))
+    repo.record_check(_check(run, "emp_dept", sql="SELECT 2"))
+    rows = _rows(load_workbook(_export(repo, out, run_id=run, evidence=True))["SQL"])
+    assert rows[0] == ["rule_id", "part", "generated_sql"]
+    assert [r[:2] for r in rows[1:]] == [["emp_name", 1], ["emp_name", 2], ["emp_dept", 1]]
+    assert [len(r[2]) for r in rows[1:3]] == [32_000, 8_000]
+    assert rows[1][2] + rows[2][2] == sql
+    assert rows[3][2] == "SELECT 2"
+
+
+def test_text_longer_than_an_excel_cell_is_truncated_with_a_marker(repo, out):
+    run = open_run(repo)
+    a = create_break(repo, run, bk="A", left="L" * 40_000)
+    _add_comment(repo, a.break_id, "c" * 40_000)
+    wb = load_workbook(_export(repo, out, run_id=run, evidence=True))
+    marker = re.compile(r" …\[truncated (\d+) chars\]$")
+    ws = wb["Breaks"]
+    for name, original in (("left", 40_000), ("comment_history", 40_000 + len("TEST\\a 2026-09-30: "))):
+        value = ws.cell(2, layout.BREAK_COLUMNS.index(name) + 1).value
+        m = marker.search(value)
+        assert m and len(value) == 32_767, name
+        assert len(value) - len(m.group(0)) + int(m.group(1)) == original, name
+    text = _rows(wb["Comments"])[1][3]
+    m = marker.search(text)
+    assert len(text) == 32_767 and text.startswith("c" * 32_000)
+    assert len(text) - len(m.group(0)) + int(m.group(1)) == 40_000
 
 
 def test_evidence_requires_a_domain(repo, out):
@@ -348,6 +381,6 @@ def test_single_domain_workbooks_only_carry_that_domains_checks(repo, out):
         assert [r[0] for r in _rows(wb["Summary"])[9:]] == ["emp_name"]
         assert "secret failure" not in {c.value for row in wb["Summary"].iter_rows() for c in row}
         if evidence:
-            assert _rows(wb["SQL"])[1:] == [["emp_name", "SELECT employees"]]
+            assert _rows(wb["SQL"])[1:] == [["emp_name", 1, "SELECT employees"]]
     wb = load_workbook(_export(repo, out, domain=None, run_id=run))
     assert [r[0] for r in _rows(wb["Summary"])[9:]] == ["emp_name", "pay_tot"]

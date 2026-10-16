@@ -33,7 +33,7 @@ TOTALS_COLUMNS = ["rule_id", "group_key", "measure", "left_value", "right_value"
 COMMENT_COLUMNS = ["break_id", "author", "created_at", "text"]
 AUDIT_COLUMNS = ["entity", "entity_id", "field", "old_value", "new_value", "changed_by", "changed_at",
                  "source"]
-SQL_COLUMNS = ["rule_id", "generated_sql"]
+SQL_COLUMNS = ["rule_id", "part", "generated_sql"]  # long SQL spans several parts (rows)
 
 # _meta: key/value rows in A1:B5, the per-break table header at row 7 (data from row 8).
 META_KEYS = ["export_id", "run_id", "schema_version", "exported_by", "exported_at"]
