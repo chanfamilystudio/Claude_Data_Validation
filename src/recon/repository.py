@@ -28,6 +28,14 @@ SNAPSHOT = "SNAPSHOT"
 _DEFAULT_SEVERITY = "medium"  # only if a break outlives every rule row (cannot happen via the engine)
 
 
+class VersionConflict(Exception):
+    """A break's version no longer matches the exported one; the whole import batch was rolled back."""
+
+    def __init__(self, break_id: int):
+        super().__init__(f"changed since export (break {break_id}); re-run import")
+        self.break_id = break_id
+
+
 class Repository(Protocol):
     def current_user(self) -> str: ...
 
@@ -368,17 +376,21 @@ class SqlRepository:
                 " rows_applied, rows_rejected) OUTPUT inserted.import_batch_id"
                 " VALUES (?, ?, SUSER_SNAME(), ?, ?)",
                 file_name, file_sha256, len(edits), rows_rejected))
-            bumped: set[int] = set()
+            start_versions: dict[int, int] = {}  # version of each break before this batch touched it
             for e in edits:
-                self._apply_edit(e, batch_id, first=e.break_id not in bumped)
-                bumped.add(e.break_id)
+                self._apply_edit(e, batch_id, start_versions)
         return batch_id
 
-    def _apply_edit(self, e: UserEdit, batch_id: int, *, first: bool) -> None:
+    def _apply_edit(self, e: UserEdit, batch_id: int, start_versions: dict[int, int]) -> None:
         rows = self._db.query(
-            "SELECT status, owner FROM recon.[break] WITH (UPDLOCK, ROWLOCK) WHERE break_id = ?", e.break_id)
+            "SELECT status, owner, version FROM recon.[break] WITH (UPDLOCK, ROWLOCK) WHERE break_id = ?",
+            e.break_id)
         if not rows:
             raise LookupError(f"break {e.break_id} does not exist")
+        first = e.break_id not in start_versions
+        start_version = start_versions.setdefault(e.break_id, rows[0]["version"])
+        if e.expected_version != start_version:
+            raise VersionConflict(e.break_id)  # rolls back the whole batch (caller's transaction)
         old_status, old_owner = rows[0]["status"], rows[0]["owner"]
 
         sets = ["updated_at = SYSUTCDATETIME()"]

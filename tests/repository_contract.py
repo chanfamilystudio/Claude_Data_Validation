@@ -22,6 +22,7 @@ from recon.model import (
     TotalRow,
     UserEdit,
 )
+from recon.repository import VersionConflict
 
 P = "2026-09"
 HASH_A = "a" * 64
@@ -465,7 +466,7 @@ class RepositoryContract:
         repo.apply_engine_changes([change("auto_clear", existing=rec)], r2)
         cleared = repo.get_break(rec.break_id)
         assert (cleared.resolution_type, cleared.resolved_run_id) == ("auto_cleared", r2)
-        repo.apply_user_edits([edit(rec.break_id, status="open")], "a.xlsx", "1" * 64, 0)
+        repo.apply_user_edits([edit(rec.break_id, status="open", version=cleared.version)], "a.xlsx", "1" * 64, 0)
         reopened = repo.get_break(rec.break_id)
         assert (reopened.status, reopened.resolution_type, reopened.resolved_run_id) == ("open", None, None)
         assert reopened.version == cleared.version + 1
@@ -525,6 +526,24 @@ class RepositoryContract:
         assert self.batch_rows(repo) == []
         assert not repo.import_seen("1" * 64)
         assert [r for r in self.audit_rows(repo) if r["source"] == "import"] == []
+
+    def test_user_edit_version_conflict_rolls_back_the_whole_batch(self, repo):
+        add_rule(repo)
+        run_id = open_run(repo)
+        a = create_break(repo, run_id, bk="E1")
+        b = create_break(repo, run_id, bk="E2")
+        repo.apply_user_edits([edit(b.break_id, owner="amy")], "0.xlsx", "0" * 64, 0)  # b is now version 2
+        with pytest.raises(VersionConflict, match=rf"^changed since export \(break {b.break_id}\); re-run import$"):
+            repo.apply_user_edits(
+                [edit(a.break_id, status="investigating", owner="bob", comment="x"), edit(b.break_id, owner="bob")],
+                "a.xlsx", "1" * 64, 0)
+        got_a, got_b = repo.get_break(a.break_id), repo.get_break(b.break_id)
+        assert (got_a.status, got_a.owner, got_a.version) == ("open", None, 1)
+        assert (got_b.owner, got_b.version) == ("amy", 2)
+        assert repo.comments_for([a.break_id, b.break_id]) == {}
+        assert len(self.batch_rows(repo)) == 1
+        assert not repo.import_seen("1" * 64)
+        assert [r["new_value"] for r in self.audit_rows(repo) if r["source"] == "import"] == ["amy"]
 
     def test_user_edit_duplicate_file_hash_raises_and_changes_nothing(self, repo):
         add_rule(repo)

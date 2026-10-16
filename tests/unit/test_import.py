@@ -357,6 +357,32 @@ def test_apply_error_propagates(repo, breaks, exported, monkeypatch):
         import_workbook(repo, exported)
 
 
+def _change_between_validation_and_apply(repo, monkeypatch, break_id):
+    """Someone else edits ``break_id`` after the importer validated it, before the batch is applied."""
+    original = repo.apply_user_edits
+
+    def racing(edits, **kw):
+        current = repo.get_break(break_id)
+        original([UserEdit(break_id, current.version, None, "racer", None)], file_name="other.xlsx",
+                 file_sha256="9" * 64, rows_rejected=0)
+        return original(edits, **kw)
+
+    monkeypatch.setattr(repo, "apply_user_edits", racing)
+
+
+def test_version_conflict_at_apply_rolls_back_whole_batch(repo, breaks, exported, monkeypatch):
+    a, b = breaks[0], breaks[1]
+    _edit(exported, {a.break_id: {"Status": "investigating", "New comment": "x"},
+                     b.break_id: {"Owner": "alice"}})
+    _change_between_validation_and_apply(repo, monkeypatch, b.break_id)
+    with pytest.raises(WorkbookError, match=rf"^changed since export \(break {b.break_id}\); re-run import$"):
+        import_workbook(repo, exported)
+    assert repo.get_break(a.break_id).status == "open"  # nothing of the batch applied
+    assert repo.comments == []
+    assert [x["file_name"] for x in repo.batches] == ["other.xlsx"]
+    assert not repo.import_seen(hashlib.sha256(exported.read_bytes()).hexdigest())
+
+
 def test_import_result_is_a_value():
     assert ImportResult(1, 0, None, 3).batch_id == 3
 
@@ -403,6 +429,15 @@ def test_cli_workbook_error_exit_2(wired, repo, breaks, exported):
     assert _invoke(exported, wired).exit_code == 0
     res = _invoke(exported, wired)
     assert res.exit_code == 2 and "file already imported" in res.output
+
+
+def test_cli_version_conflict_exit_2(wired, repo, breaks, exported, monkeypatch):
+    b = breaks[0]
+    _edit(exported, {b.break_id: {"Status": "investigating"}})
+    _change_between_validation_and_apply(repo, monkeypatch, b.break_id)
+    res = _invoke(exported, wired)
+    assert res.exit_code == 2
+    assert res.output.strip() == f"changed since export (break {b.break_id}); re-run import"
 
 
 def test_cli_missing_file_exit_2(wired, tmp_path):

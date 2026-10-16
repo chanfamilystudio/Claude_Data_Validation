@@ -22,7 +22,7 @@ from recon.executor import execute_run
 from recon.logging_setup import configure_logging
 from recon.migrations import apply_migrations
 from recon.periods import SNAPSHOT, resolve_period
-from recon.repository import Repository, SqlRepository
+from recon.repository import Repository, SqlRepository, VersionConflict
 from recon.signoff import SignoffRefused, revoke, sign_off
 
 app = typer.Typer(no_args_is_help=True, help="Workday to Great Plains reconciliation engine.")
@@ -252,7 +252,7 @@ def import_(
     try:
         try:
             result = import_workbook(SqlRepository(database), file, dry_run=dry_run)
-        except WorkbookError as exc:
+        except (WorkbookError, VersionConflict) as exc:
             typer.echo(str(exc))
             raise typer.Exit(2) from exc
         except Exception as exc:  # exit 1 would read as "rows rejected"

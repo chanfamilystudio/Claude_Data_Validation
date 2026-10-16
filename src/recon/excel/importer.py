@@ -15,7 +15,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 from recon.breaks import validate_user_transition
 from recon.excel import layout
 from recon.model import UserEdit
-from recon.repository import Repository
+from recon.repository import Repository, VersionConflict
 
 REJECTS_SHEET = "Rejects"
 REASON = "Reason"
@@ -177,6 +177,9 @@ def import_workbook(repo: Repository, path: Path, *, dry_run: bool = False) -> I
         _write_rejects(rejects_path, rejects)
     batch_id = None
     if edits and not dry_run:
-        batch_id = repo.apply_user_edits(edits, file_name=path.name, file_sha256=digest,
-                                         rows_rejected=len(rejects))
+        try:
+            batch_id = repo.apply_user_edits(edits, file_name=path.name, file_sha256=digest,
+                                             rows_rejected=len(rejects))
+        except VersionConflict as exc:  # changed after validation: the whole batch was rolled back
+            raise WorkbookError(str(exc)) from exc
     return ImportResult(len(edits), len(rejects), rejects_path, batch_id)

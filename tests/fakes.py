@@ -21,6 +21,7 @@ from recon.model import (
     TotalRow,
     UserEdit,
 )
+from recon.repository import VersionConflict
 
 
 def utcnow() -> datetime:
@@ -276,6 +277,8 @@ class InMemoryRepository:
         for e in edits:
             if e.break_id not in self.breaks:
                 raise LookupError(f"break {e.break_id} does not exist")
+            if e.expected_version != self.breaks[e.break_id]["version"]:
+                raise VersionConflict(e.break_id)
         batch_id = self._next("batch")
         self.batches.append({
             "import_batch_id": batch_id, "file_name": file_name, "file_sha256": file_sha256,
