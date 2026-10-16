@@ -104,10 +104,11 @@ def _summary_sheet(ws: Worksheet, repo: Repository, run: RunRow | None, run_id: 
     _write_header(ws, layout.SUMMARY_CHECK_COLUMNS, header_row)
     ws.column_dimensions["A"].width = 28
     ws.column_dimensions["B"].width = 22
-    ws.column_dimensions["F"].width = 60
+    ws.column_dimensions["G"].width = 60
     if run_id is not None:
-        checks = repo.checks_for_run(run_id)
-        _write_rows(ws, [[c.rule_id, c.result, c.rows_left, c.rows_right, c.break_count, c.error_message]
+        checks = repo.checks_for_run(run_id, domain)
+        _write_rows(ws, [[c.rule_id, c.severity, c.result, c.rows_left, c.rows_right, c.break_count,
+                          c.error_message]
                          for c in checks], header_row + 1)
 
 
@@ -169,8 +170,8 @@ def export_workbook(repo: Repository, *, domain: str | None, period_label: str, 
     """Write the workbook for ``domain`` (``None`` = all domains) and ``period_label`` to ``out_path``.
 
     ``run_id`` selects the run shown on Summary / Totals / SQL and the break set (breaks resolved in
-    that run are included); when ``None`` the latest run covering ``domain`` is shown and only
-    open / investigating / accepted breaks are listed.  Evidence mode lists every break, adds the
+    that run are included); when ``None`` the latest run covering ``domain`` is shown and the breaks
+    resolved in *that* run are included.  Evidence mode lists every break, adds the
     Comments / Audit / SQL sheets and leaves nothing editable.
     """
     if evidence and domain is None:
@@ -185,7 +186,7 @@ def export_workbook(repo: Repository, *, domain: str | None, period_label: str, 
         breaks = repo.breaks_for(domain, period_label)
     else:
         breaks = repo.breaks_for(domain, period_label, statuses={"open", "investigating", "accepted"},
-                                 resolved_in_run=run_id)
+                                 resolved_in_run=shown_run)
     breaks = sorted(breaks, key=_sort_key)
     comments = repo.comments_for([b.break_id for b in breaks])
 
@@ -209,7 +210,7 @@ def export_workbook(repo: Repository, *, domain: str | None, period_label: str, 
         _write_header(ws, layout.SQL_COLUMNS)
         ws.column_dimensions["B"].width = 120
         if shown_run is not None:
-            _write_rows(ws, [[c.rule_id, c.generated_sql] for c in repo.checks_for_run(shown_run)])
+            _write_rows(ws, [[c.rule_id, c.generated_sql] for c in repo.checks_for_run(shown_run, domain)])
     _meta_sheet(wb.create_sheet(layout.META), shown_run, exported_by, breaks)
     for ws in wb:
         _protect(ws)

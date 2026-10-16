@@ -66,6 +66,9 @@ class CheckRecord:
     generated_sql: str
     duration_ms: int
     error_message: str | None
+    # filled on reads (from the rule row the check ran); ignored when recording a check
+    domain: str | None = None
+    severity: str | None = None
 
 
 @dataclass(frozen=True)

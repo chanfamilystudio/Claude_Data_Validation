@@ -23,9 +23,9 @@ STATUSES = ["open", "investigating", "resolved", "accepted"]
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 # Summary: run metadata as key/value rows, then the per-rule check table.
-# (Severity is not part of the check table: a CheckRecord does not carry it.)
 SUMMARY_RUN_KEYS = ["run_id", "domain", "period", "status", "run_by", "started_at", "finished_at"]
-SUMMARY_CHECK_COLUMNS = ["rule_id", "result", "rows_left", "rows_right", "break_count", "error_message"]
+SUMMARY_CHECK_COLUMNS = ["rule_id", "severity", "result", "rows_left", "rows_right", "break_count",
+                         "error_message"]
 NO_RUN = "no run"
 
 TOTALS_COLUMNS = ["group_key", "measure", "left_value", "right_value", "diff", "tolerance_applied",

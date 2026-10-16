@@ -167,8 +167,16 @@ class InMemoryRepository:
                                     diff=dec6(row.diff), tolerance_applied=dec6(row.tolerance_applied))
             self.totals.append({"run_check_id": run_check_id, "row": q})
 
-    def checks_for_run(self, run_id: int) -> list[CheckRecord]:
-        return [c["rec"] for _, c in sorted(self.checks.items()) if c["rec"].run_id == run_id]
+    def checks_for_run(self, run_id: int, domain: str | None = None) -> list[CheckRecord]:
+        out = []
+        for _, c in sorted(self.checks.items()):
+            rec = c["rec"]
+            if rec.run_id != run_id:
+                continue
+            rule = next(r for r in self.rules if r["rule_id"] == rec.rule_id and r["version_hash"] == rec.version_hash)
+            if domain is None or rule["domain"] == domain:
+                out.append(dataclasses.replace(rec, domain=rule["domain"], severity=rule["severity"]))
+        return out
 
     def totals_for_run(self, run_id: int, domain: str | None) -> list[TotalRow]:
         out = []

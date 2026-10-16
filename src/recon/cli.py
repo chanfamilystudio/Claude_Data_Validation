@@ -208,9 +208,14 @@ def export(
                 if run_row is None or run_row.period_label != label:
                     typer.echo(f"run {run_id} not found for period {label}")
                     raise typer.Exit(2)
+                if domain is not None and run_row.domain not in (None, domain):
+                    typer.echo(f"run {run_id} covers domain {run_row.domain!r}, not {domain!r}")
+                    raise typer.Exit(2)
             path = export_workbook(repo, domain=domain, period_label=label, run_id=run_id,
                                    out_path=export_path(project.settings.export_dir, domain, label, run_id))
-        except (pyodbc.Error, OSError) as exc:
+        except typer.Exit:
+            raise
+        except Exception as exc:  # exit 1 would read as "breaks found"
             typer.echo(f"Export failed: {exc}")
             raise typer.Exit(2) from exc
     finally:

@@ -455,11 +455,22 @@ def test_cli_run_writes_workbook_and_export_command(staging, dsn, tmp_fixture, m
     res = CliRunner().invoke(app, ["export", "--all", "--period", "2026-09", "--root", str(tmp_fixture)])
     assert res.exit_code == 0, res.output
     latest = tmp_fixture / "exports" / "recon_all_2026-09_latest.xlsx"
-    assert latest.is_file() and _breaks_sheet(latest) == []  # latest-mode: resolved breaks are not listed
+    assert latest.is_file()
+    # latest-mode lists the breaks resolved in the run it shows
+    assert [(r["business_key"], r["Status"]) for r in _breaks_sheet(latest)] == [("000002", "resolved")]
 
     res = CliRunner().invoke(app, ["export", "--domain", "employees", "--period", "2026-09",
                                    "--run-id", "999999", "--root", str(tmp_fixture)])
     assert res.exit_code == 2 and "run 999999 not found" in res.output
+
+    # a payroll run is not a run of the employees domain
+    res = CliRunner().invoke(app, ["run", "--domain", "payroll", "--period", "2026-09",
+                                   "--root", str(tmp_fixture), "--no-export"])
+    pay_run = _last_run(staging)["run_id"]
+    res = CliRunner().invoke(app, ["export", "--domain", "employees", "--period", "2026-09",
+                                   "--run-id", str(pay_run), "--root", str(tmp_fixture)])
+    assert res.exit_code == 2 and f"run {pay_run} covers domain 'payroll', not 'employees'" in res.output
+    assert not (tmp_fixture / "exports" / f"recon_employees_2026-09_{pay_run}.xlsx").exists()
 
 
 def test_cli_run_export_failure_keeps_exit_code(staging, dsn, tmp_fixture, monkeypatch, _reset_recon_logger):

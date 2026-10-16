@@ -55,3 +55,20 @@ def test_run_exporter_failure_is_a_warning(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli, "export_workbook", boom)
     assert run_exporter(InMemoryRepository(), tmp_path, None, "2026-09")(3) is None
     assert "Warning: workbook export failed: disk full" in capsys.readouterr().out
+
+
+def test_export_any_failure_exits_2(fixture_root, monkeypatch):
+    class FakeDb:
+        def close(self):
+            pass
+
+    def boom(*a, **k):
+        raise ValueError("bad cell")
+
+    monkeypatch.setenv("RECON_DB", "Driver={x};Server=none")
+    monkeypatch.setattr(cli, "Database", lambda conn: FakeDb())
+    monkeypatch.setattr(cli, "SqlRepository", lambda db: object())
+    monkeypatch.setattr(cli, "export_workbook", boom)
+    res = CliRunner().invoke(app, ["export", "--domain", "payroll", "--period", "2026-09",
+                                   "--root", str(fixture_root)])
+    assert res.exit_code == 2 and "Export failed: bad cell" in res.output

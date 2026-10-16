@@ -118,9 +118,9 @@ def test_resolved_breaks_only_when_resolved_in_this_run(repo, out):
     ws = load_workbook(_export(repo, out, run_id=run2))["Breaks"]
     keys = {ws.cell(r, 6).value: ws.cell(r, 16).value for r in range(2, ws.max_row + 1)}
     assert keys == {"K": "open", "G": "resolved"}
-    # latest-mode export (no run id) excludes every resolved break
+    # latest-mode export (no run id) lists what was resolved in the run it shows (run2), not earlier ones
     ws = load_workbook(_export(repo, out))["Breaks"]
-    assert {ws.cell(r, 6).value for r in range(2, ws.max_row + 1)} == {"K"}
+    assert {ws.cell(r, 6).value for r in range(2, ws.max_row + 1)} == {"K", "G"}
 
 
 def test_investigating_and_accepted_included(repo, out):
@@ -234,9 +234,10 @@ def test_summary_with_run_and_checks(repo, out):
     r = repo.runs[run]
     assert meta["started_at"] == r["started_at"].isoformat(sep=" ", timespec="seconds")
     assert meta["finished_at"] == r["finished_at"].isoformat(sep=" ", timespec="seconds")
-    assert rows[8] == layout.SUMMARY_CHECK_COLUMNS + [None] * (len(rows[8]) - 6)
-    assert rows[9][:6] == ["emp_name", "fail", 3, 4, 2, None]
-    assert rows[10][:6] == ["emp_dept", "error", None, None, 0, "boom"]
+    assert rows[8][:7] == layout.SUMMARY_CHECK_COLUMNS == [
+        "rule_id", "severity", "result", "rows_left", "rows_right", "break_count", "error_message"]
+    assert rows[9][:7] == ["emp_name", "high", "fail", 3, 4, 2, None]
+    assert rows[10][:7] == ["emp_dept", "low", "error", None, None, 0, "boom"]
 
 
 def test_summary_of_all_domain_run_uses_all(repo, out):
@@ -334,3 +335,18 @@ def test_failed_export_leaves_no_partial_file(repo, out, monkeypatch):
     with pytest.raises(RuntimeError):
         _export(repo, out)
     assert not out.exists() and not out.with_name("book.xlsx.tmp").exists()
+
+
+def test_single_domain_workbooks_only_carry_that_domains_checks(repo, out):
+    run = open_run(repo, domain=None)
+    repo.record_check(_check(run, "emp_name", sql="SELECT employees"))
+    repo.record_check(_check(run, "pay_tot", "error", err="secret failure", sql="SELECT payroll"))
+    create_break(repo, run, bk="E1")
+    for evidence in (False, True):
+        wb = load_workbook(_export(repo, out, run_id=run, evidence=evidence))
+        assert [r[0] for r in _rows(wb["Summary"])[9:]] == ["emp_name"]
+        assert "secret failure" not in {c.value for row in wb["Summary"].iter_rows() for c in row}
+        if evidence:
+            assert _rows(wb["SQL"])[1:] == [["emp_name", "SELECT employees"]]
+    wb = load_workbook(_export(repo, out, domain=None, run_id=run))
+    assert [r[0] for r in _rows(wb["Summary"])[9:]] == ["emp_name", "pay_tot"]

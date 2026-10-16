@@ -49,7 +49,7 @@ class Repository(Protocol):
 
     def get_run(self, run_id: int) -> RunRow | None: ...
 
-    def checks_for_run(self, run_id: int) -> list[CheckRecord]: ...
+    def checks_for_run(self, run_id: int, domain: str | None = None) -> list[CheckRecord]: ...
 
     def totals_for_run(self, run_id: int, domain: str | None) -> list[TotalRow]: ...
 
@@ -252,12 +252,19 @@ class SqlRepository:
                 t.tolerance_applied, 1 if t.within_tolerance else 0,
             )
 
-    def checks_for_run(self, run_id: int) -> list[CheckRecord]:
-        rows = self._db.query(
-            "SELECT run_id, rule_id, version_hash, result, rows_left, rows_right, break_count,"
-            " generated_sql, duration_ms, error_message FROM recon.run_check"
-            " WHERE run_id = ? ORDER BY run_check_id", run_id)
-        return [CheckRecord(**r) for r in rows]
+    def checks_for_run(self, run_id: int, domain: str | None = None) -> list[CheckRecord]:
+        sql = (
+            "SELECT c.run_id, c.rule_id, c.version_hash, c.result, c.rows_left, c.rows_right, c.break_count,"
+            " c.generated_sql, c.duration_ms, c.error_message, r.domain, r.severity"
+            " FROM recon.run_check c"
+            " JOIN recon.[rule] r ON r.rule_id = c.rule_id AND r.version_hash = c.version_hash"
+            " WHERE c.run_id = ?"
+        )
+        params: list[Any] = [run_id]
+        if domain is not None:
+            sql += " AND r.domain = ?"
+            params.append(domain)
+        return [CheckRecord(**r) for r in self._db.query(sql + " ORDER BY c.run_check_id", *params)]
 
     def totals_for_run(self, run_id: int, domain: str | None) -> list[TotalRow]:
         sql = (

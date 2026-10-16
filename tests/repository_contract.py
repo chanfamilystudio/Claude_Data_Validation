@@ -188,16 +188,30 @@ class RepositoryContract:
 
     # checks and totals -----------------------------------------------------------------------
     def test_record_check_roundtrip_in_order(self, repo):
-        add_rule(repo, "emp_name", "employees")
-        add_rule(repo, "pay_total", "payroll", version_hash=HASH_B)
+        add_rule(repo, "emp_name", "employees", severity="high")
+        add_rule(repo, "pay_total", "payroll", severity="low", version_hash=HASH_B)
         run_id = open_run(repo, None)
         ok = CheckRecord(run_id, "emp_name", HASH_A, "pass", 10, 10, 0, "SELECT 1", 12, None)
         bad = CheckRecord(run_id, "pay_total", HASH_B, "error", None, None, 0, "SELECT 2", 3, "boom")
         id1 = repo.record_check(ok)
         id2 = repo.record_check(bad)
         assert id1 != id2
-        assert repo.checks_for_run(run_id) == [ok, bad]
+        ok_read = dataclasses.replace(ok, domain="employees", severity="high")
+        bad_read = dataclasses.replace(bad, domain="payroll", severity="low")
+        assert repo.checks_for_run(run_id) == [ok_read, bad_read]
         assert repo.checks_for_run(run_id + 999) == []
+
+    def test_checks_for_run_filters_by_domain_and_uses_the_rule_version_run(self, repo):
+        add_rule(repo, "emp_name", "employees", severity="high")
+        add_rule(repo, "pay_total", "payroll", severity="low", version_hash=HASH_B)
+        run_id = open_run(repo, None)
+        repo.record_check(CheckRecord(run_id, "emp_name", HASH_A, "pass", 1, 1, 0, "SELECT 1", 1, None))
+        repo.record_check(CheckRecord(run_id, "pay_total", HASH_B, "fail", 1, 1, 2, "SELECT 2", 1, None))
+        add_rule(repo, "emp_name", "employees", severity="low", version_hash=HASH_C)  # a later rule version
+        assert [c.rule_id for c in repo.checks_for_run(run_id, "employees")] == ["emp_name"]
+        assert [c.rule_id for c in repo.checks_for_run(run_id, "payroll")] == ["pay_total"]
+        assert repo.checks_for_run(run_id, "gl") == []
+        assert repo.checks_for_run(run_id, "employees")[0].severity == "high"  # severity of the version that ran
 
     def test_record_check_unknown_rule_raises(self, repo):
         run_id = open_run(repo)
