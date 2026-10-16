@@ -6,6 +6,7 @@ with ``INSERT INTO #diffs (...) SELECT * FROM (<diff_sql>) d`` under bound param
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import date
 
 import pyodbc
@@ -66,18 +67,29 @@ def _map(name: str, obj: str, frm: str, to: str, effective: dict | None = None) 
     return MappingConfig.model_validate(data)
 
 
-def _load(db, generated, params=PARAMS) -> set[tuple]:
-    """Fill #diffs exactly as the executor does; return the (key, type, field, left, right, diff) set."""
+class _Rows(Counter):
+    """Diff rows with multiplicity; compares equal to a set only if every row occurs exactly once."""
+
+    def __eq__(self, other):
+        if isinstance(other, (set, frozenset)):
+            other = Counter(other)
+        return Counter.__eq__(self, other)
+
+    __hash__ = None
+
+
+def _load(db, generated, params=PARAMS) -> _Rows:
+    """Fill #diffs exactly as the executor does; return the (key, type, field, left, right, diff) rows."""
     db.execute("IF OBJECT_ID('tempdb..#diffs') IS NOT NULL DROP TABLE #diffs")
     db.execute(DIFFS_DDL)
     db.execute(
         PARAM_HEADER + f"INSERT INTO #diffs ({DIFF_COLUMNS}) SELECT * FROM (\n{generated.diff_sql}\n) d",
         *params,
     )
-    return {
+    return _Rows(
         (r["business_key"], r["break_type"], r["field_name"], r["left_value"], r["right_value"], r["diff"])
         for r in db.query("SELECT * FROM #diffs")
-    }
+    )
 
 
 def _counts(db, generated, params=PARAMS) -> tuple[int, int]:
@@ -302,7 +314,7 @@ def test_accepted_values_not_confused_by_blank_value(emp_tables):
     db = emp_tables
     rule = _quality_rule([{"accepted_values": {"column": "STATUS", "values": ["", "A"]}}])
     got = _load(db, generate(rule, _ctx(EMP, EMP_DEPTS)))
-    assert {k[0] for k in got} == {"000004", "000009"}  # the 'I' row and the 'x' row; blank accepts nothing
+    assert sorted(k[0] for k in got.elements()) == ["000004", "000009"]  # the 'I' and 'x' rows; blank accepts nothing
 
 
 def test_custom_sql_without_business_key_column_fails(emp_tables):
@@ -341,3 +353,58 @@ def test_diff_columns_have_contract_types(emp_tables):
         ("right_value", "nvarchar", 8000, 0, 0),
         ("diff", "decimal", 17, 38, 6),
     ]
+
+
+def test_rows_with_the_same_break_key_collapse_to_one_row(emp_tables):
+    """break_key is UNIQUE downstream: repeated (business_key, break_type, field_name) yield one diff row."""
+    db = emp_tables
+    db.execute("DELETE FROM t_mq_gp.emp")
+    for row in (
+        ("K1", "D1", 7, "A", "2099-01-01"), ("K1", "D1", 5, "A", "2099-01-01"),  # same key, two bad INACTIVE values
+        ("K1", "D1", 0, "A", "2099-01-01"),  # same key again: custom_sql repeats too
+        (None, "D1", 0, "A", "2020-01-01"), ("  ", "D1", 0, "A", "2020-01-01"),  # two null-ish keys
+        ("K2", "D1", 0, "A", "2020-01-01"),
+    ):
+        db.execute("INSERT INTO t_mq_gp.emp VALUES (?, ?, ?, ?, ?)", *row)
+    rule = _quality_rule(
+        [
+            {"not_null": ["EMPLOYID"]},
+            {"accepted_values": {"column": "INACTIVE", "values": [0, 1]}},
+            QUALITY_ASSERTIONS[-1],
+        ]
+    )
+    g = generate(rule, _ctx(EMP, EMP_DEPTS))
+    db.execute("IF OBJECT_ID('tempdb..#diffs') IS NOT NULL DROP TABLE #diffs")
+    db.execute(DIFFS_DDL)
+    db.execute(PARAM_HEADER + f"INSERT INTO #diffs ({DIFF_COLUMNS}) SELECT * FROM (\n{g.diff_sql}\n) d", *PARAMS)
+    rows = db.query("SELECT business_key, field_name, left_value FROM #diffs")
+    assert sorted((r["business_key"], r["field_name"]) for r in rows) == [
+        ("K1", "INACTIVE"),
+        ("K1", "future_hire_dates"),
+        ("∅", "EMPLOYID"),
+    ]
+    (inactive,) = (r for r in rows if r["field_name"] == "INACTIVE")
+    assert inactive["left_value"] in ("5", "7")  # one of the colliding values is kept
+
+
+def test_like_ignores_char_padding_but_still_flags_violations(schemas):
+    db = schemas
+    db.execute("CREATE TABLE t_mq_gp.emp (EMPLOYID CHAR(15) NULL)")
+    for value in ("000001", "000002", "00003x", "abc", "000004 "):
+        db.execute("INSERT INTO t_mq_gp.emp VALUES (?)", value)
+    assert db.scalar("SELECT DATALENGTH(EMPLOYID) FROM t_mq_gp.emp WHERE EMPLOYID = '000001'") == 15  # padded
+    rule = _quality_rule([{"like": {"column": "EMPLOYID", "pattern": "[0-9][0-9][0-9][0-9][0-9][0-9]"}}])
+    got = _load(db, generate(rule, _ctx(EMP)))
+    assert got == {
+        ("00003X", "quality_violation", "EMPLOYID", "00003x" + " " * 9, None, None),
+        ("ABC", "quality_violation", "EMPLOYID", "abc" + " " * 12, None, None),
+    }
+
+
+def test_like_is_case_sensitive_as_written(schemas):
+    db = schemas
+    db.execute("CREATE TABLE t_mq_gp.emp (EMPLOYID NVARCHAR(20) NULL)")
+    for value in ("abc", "ABC"):
+        db.execute("INSERT INTO t_mq_gp.emp VALUES (?)", value)
+    rule = _quality_rule([{"like": {"column": "EMPLOYID", "pattern": "[a-z][a-z][a-z]"}}])
+    assert _load(db, generate(rule, _ctx(EMP))) == {("ABC", "quality_violation", "EMPLOYID", "ABC", None, None)}

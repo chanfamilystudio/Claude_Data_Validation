@@ -6,6 +6,12 @@ with ``break_type = 'quality_violation'`` and ``business_key`` built from the ru
 (trim, upper-case), so a blank counts as null. ``field_name`` is the column, ``unique:<columns>``, or
 the ``custom_sql`` name. Nulls: only ``not_null`` reports them; ``unique``, ``accepted_values``,
 ``references`` and ``like`` look at non-null values only.
+
+``like`` matches the trimmed value (CHAR columns keep their padding) under the BIN2 collation, so the
+pattern is case-sensitive exactly as written (``[a-z]`` matches lower-case letters only);
+``left_value`` shows the raw value. The outer SELECT collapses rows with the same
+``(business_key, break_type, field_name)`` (``recon.break.break_key`` must be unique), keeping
+``MIN()`` of the values.
 """
 
 from __future__ import annotations
@@ -140,10 +146,11 @@ class _Builder:
 
     def like(self, a: Like) -> str:
         raw = text_of(column_ref("s", a.column))
+        trimmed = f"LTRIM(RTRIM({raw})) COLLATE {COMPARE_COLLATION}"
         body = (
             f"FROM {self.source} AS s\n"
             f"WHERE {self._value(a.column)} IS NOT NULL\n"
-            f"{TAB}AND {raw} COLLATE {COMPARE_COLLATION} NOT LIKE {_nlit(a.pattern)} COLLATE {COMPARE_COLLATION}"
+            f"{TAB}AND {trimmed} NOT LIKE {_nlit(a.pattern)} COLLATE {COMPARE_COLLATION}"
         )
         return _branch(self.key, _nlit(a.column), raw, _NULL, body)
 
@@ -185,10 +192,11 @@ def _diff_sql(rule: QualityRule, ctx: GenContext) -> str:
         f"{TAB}CAST(q.business_key AS NVARCHAR(400)) COLLATE DATABASE_DEFAULT AS business_key,\n"
         f"{TAB}CAST(q.break_type AS VARCHAR(30)) AS break_type,\n"
         f"{TAB}CAST(q.field_name AS NVARCHAR(128)) AS field_name,\n"
-        f"{TAB}CAST(q.left_value AS NVARCHAR(4000)) COLLATE DATABASE_DEFAULT AS left_value,\n"
-        f"{TAB}CAST(q.right_value AS NVARCHAR(4000)) COLLATE DATABASE_DEFAULT AS right_value,\n"
-        f"{TAB}CAST(q.diff AS DECIMAL(38,6)) AS diff\n"
-        "FROM (\n" + sub(union) + "\n) AS q"
+        f"{TAB}CAST(MIN(q.left_value) AS NVARCHAR(4000)) COLLATE DATABASE_DEFAULT AS left_value,\n"
+        f"{TAB}CAST(MIN(q.right_value) AS NVARCHAR(4000)) COLLATE DATABASE_DEFAULT AS right_value,\n"
+        f"{TAB}CAST(MIN(q.diff) AS DECIMAL(38,6)) AS diff\n"
+        "FROM (\n" + sub(union) + "\n) AS q\n"
+        "GROUP BY q.business_key, q.break_type, q.field_name"
     )
 
 
